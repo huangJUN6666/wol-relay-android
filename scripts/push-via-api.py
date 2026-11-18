@@ -32,6 +32,15 @@ API = "https://api.github.com"
 DEFAULT_REPO = "wol-relay-android"
 DEFAULT_BRANCH = "main"
 
+# 这个项目定位是 root 版块。GitHub 上没有"版块"这个概念，靠的是 topics：
+# 别人逛 github.com/topics/magisk-module、/kernel-su、/wake-on-lan 才翻得到。
+TOPICS = [
+    "magisk", "magisk-module", "magisk-modules", "root",
+    "kernelsu", "apatch", "android-root",
+    "wake-on-lan", "wol", "wakeonlan", "remote-wake",
+    "android", "golang", "self-hosted", "home-automation", "tailscale",
+]
+
 
 def token():
     t = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -171,10 +180,23 @@ def main():
     # 默认分支对齐（仓库可能是用别的默认名建的）
     req("PATCH", "/repos/%s" % full, tok, {"default_branch": branch}, ok=(200, 422))
 
+    # ---------- 4. topics ----------
+    # root 圈子基本靠 topic 页逛（github.com/topics/magisk-module 这种），
+    # 不打标签的话没人搜得到，等于白传。
+    print("[4/5] 打 topics")
+    try:
+        req("PUT", "/repos/%s/topics" % full, tok, {"names": TOPICS}, ok=(200, 422))
+        print("      " + " ".join(TOPICS))
+    except SystemExit:
+        print("      topics 设置失败（token 可能没有 administration 权限），不影响代码")
+    except Exception as e:
+        print("      topics 设置失败：%s，不影响代码" % e)
+
     print()
     print("=== 完成 ===")
     print("仓库：https://github.com/%s" % full)
     print("提交：https://github.com/%s/commit/%s" % (full, commit["sha"]))
+    print("Root 话题页：https://github.com/topics/magisk-module")
 
 
 def _iso_now():
