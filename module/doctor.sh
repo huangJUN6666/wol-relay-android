@@ -131,6 +131,20 @@ PY
     fi
 fi
 
+# 隧道网卡会抢默认路由，广播包从隧道发出去电脑永远收不到。
+# 这里单独立一条，因为它在日志里表现为"发送成功"，最难查。
+TUNNEL_IF=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(tun|tap|tailscale|wg|ppp|ipsec)' | head -3)
+if [ -n "$TUNNEL_IF" ]; then
+    info "检测到隧道网卡：$(echo "$TUNNEL_IF" | tr '\n' ' ')"
+    info "中继已会自动跳过隧道网卡算广播地址，不用手动处理"
+    # 看默认路由是不是落在隧道上
+    DEF_IF=$(ip route 2>/dev/null | grep '^default' | head -1 | sed 's/.*dev \([^ ]*\).*/\1/')
+    if echo "$DEF_IF" | grep -qE '^(tun|tap|tailscale|wg|ppp|ipsec)'; then
+        info "当前默认路由走的是 $DEF_IF（隧道）。v2.1.1 起已不受影响，"
+        info "老版本中继会把魔术包发进隧道，表现为【日志说发送成功、电脑不醒】"
+    fi
+fi
+
 # ---------- 第四层：中继进程 ----------
 head2 "第 4 层 · 中继进程"
 

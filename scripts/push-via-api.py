@@ -146,7 +146,7 @@ def main():
     if msg:
         msg = git("log", "-1", "--pretty=%B")
     else:
-        msg = "WOL Relay v2.1.0"
+        msg = "WOL Relay v2.1.1"
 
     body = {"message": msg, "tree": new_tree["sha"], "parents": parents}
     if not parents:

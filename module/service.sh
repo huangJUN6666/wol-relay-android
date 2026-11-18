@@ -6,7 +6,7 @@
 #  作者：神仙道  QQ 1974147300
 # ============================================================
 #
-#  这个脚本里有三处地方踩过坑，写在这里免得后来人重踩：
+#  这个脚本里有四处地方踩过坑，写在这里免得后来人重踩：
 #
 #  【坑 1】不要用 pkill -f "wolrelay"
 #      本脚本自己的路径是 /data/adb/modules/wol-relay/service.sh，
@@ -24,6 +24,12 @@
 #      冷启动到真正能通要 40~70 秒（受机型和运营商影响）。
 #      固定 sleep 8 秒必然误判成"没连上"。
 #      → 正确做法：轮询，等到连上或超时为止。
+#
+#  【坑 4】守护循环不能无限快重试
+#      用户没填 MAC 时 wolrelay 是 log.Fatal 直接退出的，
+#      固定 sleep 3 秒重启 = 每分钟 20 次、每小时 1200 次，
+#      日志几小时就上万行，手机上还费电。
+#      → 正确做法：连续失败就退避，最长 5 分钟一次；跑稳了再回到 3 秒。
 
 MODDIR=${0%/*}
 LOG=/data/local/tmp/wolrelay.log
@@ -147,9 +153,14 @@ else
 fi
 
 # ---------- 5. 中继进程守护 ----------
-# 进程退出就 3 秒后重来，永不放弃。
+# 进程退出就重启，但带退避：
+# 正常情况（跑了几小时才退出）3 秒后立刻重来；
+# 一启动就挂（多半是 MAC 没填 / 端口被占），逐步拉长到 5 分钟一次，
+# 免得日志刷屏、也免得空转耗电。
 (
+FAIL=0
 while true; do
+    START=$(date +%s)
     log "启动 wolrelay"
     if [ -f "$CONF" ]; then
         "$MODDIR/wolrelay" -config "$CONF" >> "$LOG" 2>&1 &
@@ -160,8 +171,28 @@ while true; do
     CHILD=$!
     echo "$CHILD" > "$PIDF"
     wait "$CHILD"
-    log "wolrelay 退出了（pid $CHILD），3 秒后重启"
-    sleep 3
+    RAN=$(( $(date +%s) - START ))
+
+    # 活过 2 分钟以上算正常退出（比如被手动 kill 重启），重置退避
+    if [ "$RAN" -ge 120 ]; then
+        FAIL=0
+    else
+        FAIL=$((FAIL + 1))
+    fi
+
+    if [ "$FAIL" -ge 2 ]; then
+        # 3, 6, 12, 24, 48, 96, 192, 300 秒
+        BACKOFF=$(( 3 * (1 << (FAIL - 1)) ))
+        [ "$BACKOFF" -gt 300 ] && BACKOFF=300
+        log "wolrelay 只活了 ${RAN}s（连续第 $FAIL 次），${BACKOFF}s 后重启。先看 doctor.sh 第 2 层"
+    else
+        BACKOFF=3
+        log "wolrelay 退出了（pid $CHILD，运行 ${RAN}s），${BACKOFF}s 后重启"
+    fi
+    sleep "$BACKOFF"
+
+    # 每次重启前顺手看一眼日志大小，别让它无限长
+    rotate_log
 done
 ) &
 

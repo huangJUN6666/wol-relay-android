@@ -5,7 +5,7 @@
 #  作者：神仙道  QQ 1974147300
 #
 #  用法：
-#    bash scripts/release.sh v2.1.0
+#    bash scripts/release.sh v2.1.1
 #
 #  为什么要有这个脚本：
 #    发布流程里最容易错的两件事，一是 tag 和 module.prop 版本号对不上，
@@ -18,14 +18,14 @@ cd "$HERE"
 
 TAG="$1"
 if [ -z "$TAG" ]; then
-    echo "用法：bash scripts/release.sh v2.1.0"
+    echo "用法：bash scripts/release.sh v2.1.1"
     exit 1
 fi
 
 case "$TAG" in
     v*) ;;
     *)
-        echo "tag 要以 v 开头，比如 v2.1.0"
+        echo "tag 要以 v 开头，比如 v2.1.1"
         exit 1
         ;;
 esac

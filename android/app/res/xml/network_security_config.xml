@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文 HTTP 白名单。
+
+  这个 App 干的事就是往局域网里一个 http://192.168.x.x:8080 发请求，
+  没有 TLS、也不该有 TLS（自签证书在手机上装起来比配 WOL 还麻烦）。
+
+  Android 9（API 28）起默认禁止明文流量，即使 application 上写了
+  usesCleartextTraffic="true"，在某些 ROM（尤其是国内定制系统）上
+  仍会被拦成 "Cleartext HTTP traffic not permitted"。
+  所以这里再显式声明一次，两个都写上才稳。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -104,23 +105,42 @@ func magicPacket(mac string) ([]byte, error) {
 
 // ---- 广播目标 ----
 
-// subnetBroadcast 取本机默认出口网卡的地址和掩码，算出定向广播地址。
-// 比如 192.168.1.23/24 -> 192.168.1.255
-// 这样换路由器、换网段都不用改配置。
-func subnetBroadcast() (string, string, error) {
-	conn, err := net.Dial("udp4", "8.8.8.8:80")
-	if err != nil {
-		return "", "", err
-	}
-	defer conn.Close()
+// vpnLike 判断这块网卡是不是"看起来像隧道"。
+//
+// 为什么一定要排掉：
+// 这个项目推荐用 Tailscale 做外网入口。Tailscale 起来之后会抢到默认路由，
+// 如果还按"默认出口网卡"去算广播地址，算出来的是 100.x 隧道网段的广播，
+// 魔术包会从隧道里发出去，家里的电脑一个字节都收不到。
+// 这是最容易踩、又最难查的一类问题：日志显示"发送成功"，电脑就是不醒。
+var vpnLike = []string{"tun", "tap", "tailscale", "wg", "ppp", "ipsec", "utun"}
 
-	local := conn.LocalAddr().(*net.UDPAddr).IP
+func looksLikeVPN(name string) bool {
+	n := strings.ToLower(name)
+	for _, p := range vpnLike {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// allSubnetBroadcasts 列出本机所有物理网卡对应的定向广播地址。
+//
+// 不再只认"默认出口"那一块网卡，而是全都算一遍：
+// 备机可能同时连着 WiFi 和 USB 网络共享，也可能插了 USB 网卡接有线。
+// 全部发一遍成本极低（几个 UDP 包），但能省掉大量"为什么不醒"的排查。
+func allSubnetBroadcasts() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return "", "", err
+		return nil
 	}
+	var out []string
+	seen := map[string]bool{}
 	for _, ifi := range ifaces {
 		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if looksLikeVPN(ifi.Name) {
 			continue
 		}
 		addrs, err := ifi.Addrs()
@@ -133,7 +153,12 @@ func subnetBroadcast() (string, string, error) {
 				continue
 			}
 			ip4 := ipnet.IP.To4()
-			if ip4 == nil || !ip4.Equal(local) {
+			if ip4 == nil || ip4.IsLoopback() {
+				continue
+			}
+			// 隧道地址段（Tailscale 的 100.64/10）也要排掉：
+			// 有些机型上隧道网卡名字看不出来，只能靠地址段判断。
+			if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
 				continue
 			}
 			mask := net.IP(ipnet.Mask).To4()
@@ -144,10 +169,15 @@ func subnetBroadcast() (string, string, error) {
 			for i := 0; i < 4; i++ {
 				bcast[i] = ip4[i] | ^mask[i]
 			}
-			return bcast.String(), ipnet.String(), nil
+			s := bcast.String()
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+				log.Printf("网卡 %s（%s）-> 广播地址 %s", ifi.Name, ipnet.String(), s)
+			}
 		}
 	}
-	return "", "", fmt.Errorf("没找到与 %s 匹配的网卡", local)
+	return out
 }
 
 func resolveTargets(c Config) []string {
@@ -165,11 +195,12 @@ func resolveTargets(c Config) []string {
 		add(t)
 	}
 	if c.AutoBroadcast != nil && *c.AutoBroadcast {
-		if b, cidr, err := subnetBroadcast(); err == nil {
-			add(b)
-			log.Printf("自动探测网段 %s，广播地址 %s", cidr, b)
-		} else {
-			log.Printf("自动探测网段失败（%v），只用配置里的目标", err)
+		b := allSubnetBroadcasts()
+		if len(b) == 0 {
+			log.Printf("没探测到可用网卡，只用配置里的目标（多半是 WiFi 没连上）")
+		}
+		for _, x := range b {
+			add(x)
 		}
 	}
 	return out
@@ -183,25 +214,52 @@ type targetResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// broadcastConn 建一个允许发广播的 UDP 连接。
+//
+// 之前直接用 net.DialTimeout 建连，在 Linux / Android 上发到 x.x.x.255
+// 这类广播地址会被内核拒掉（EACCES），日志里全是失败但看不出原因。
+// 这里通过 Dialer.Control 在 socket 建好、还没开始发之前把
+// SO_BROADCAST 打开，255.255.255.255 和定向广播才能发出去。
+func broadcastConn(target string, port int) (net.Conn, error) {
+	d := &net.Dialer{
+		Timeout: 2 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				setBroadcast(fd)
+			}); err != nil {
+				return err
+			}
+			return serr
+		},
+	}
+	return d.Dial("udp4", net.JoinHostPort(target, fmt.Sprint(port)))
+}
+
 func blast(c Config, pkt []byte, targets []string) []targetResult {
 	res := make([]targetResult, 0, len(targets))
 	for _, t := range targets {
 		r := targetResult{Target: t}
 		var lastErr error
+		// 一个目标只建一次连接，重试时复用。
+		// 原来每轮都重新 Dial，广播场景下白白多两次握手。
+		conn, err := broadcastConn(t, c.UDPPort)
+		if err != nil {
+			r.Error = err.Error()
+			res = append(res, r)
+			continue
+		}
 		for attempt := 0; attempt < 3; attempt++ {
-			conn, err := net.DialTimeout("udp4", net.JoinHostPort(t, fmt.Sprint(c.UDPPort)), 2*time.Second)
-			if err == nil {
-				_, err = conn.Write(pkt)
-				conn.Close()
-			}
-			if err == nil {
+			_, werr := conn.Write(pkt)
+			if werr == nil {
 				r.OK = true
 				lastErr = nil
 				break
 			}
-			lastErr = err
+			lastErr = werr
 			time.Sleep(80 * time.Millisecond)
 		}
+		conn.Close()
 		if lastErr != nil {
 			r.Error = lastErr.Error()
 		}
@@ -230,7 +288,7 @@ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:c
 background:#0f1115;color:#e8eaed;font-family:-apple-system,"PingFang SC",sans-serif}
 .c{width:100%;max-width:420px;padding:32px 24px;text-align:center}
 h1{font-size:20px;margin:0 0 6px}.s{font-size:13px;color:#8b93a1;margin-bottom:28px}
-button{width:100%%;padding:20px;font-size:19px;font-weight:600;color:#fff;border:0;
+button{width:100%;padding:20px;font-size:19px;font-weight:600;color:#fff;border:0;
 border-radius:16px;background:linear-gradient(135deg,#31c48d,#1e8f66);cursor:pointer}
 button:active{transform:scale(.97)}button:disabled{opacity:.6}
 #m{margin-top:20px;font-size:14px;min-height:22px;color:#8b93a1}
@@ -379,4 +437,7 @@ func main() {
 	}
 }
 
-const version = "2.0.0"
+// 版本号要跟 module.prop 的 version 对上。
+// App 会拿 /status 返回的 version 判断中继是不是太老，
+// 两边不一致就会出现"明明刷的是新版，App 说过期了"。
+const version = "2.1.1"

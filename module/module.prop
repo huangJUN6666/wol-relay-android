@@ -1,6 +1,6 @@
 id=wol-relay
 name=WOL Relay 中继守护
-version=v2.1.0
-versionCode=20100
+version=v2.1.1
+versionCode=20101
 author=神仙道 (QQ 1974147300)
-description=把一台闲置安卓机变成家里的开机跳板：开机自启、HTTP 监听、按需向局域网广播魔术包，进程退出自动拉起。支持 Magisk / KernelSU / APatch。装完跑 doctor.sh 可五层自检。
+description=把一台闲置安卓机变成家里的开机跳板：开机自启、HTTP 监听、按需向局域网广播魔术包，进程退出自动退避重启。自动跳过 Tailscale 等隧道网卡算广播地址，开了代理/VPN 也不会发错网段。支持 Magisk / KernelSU / APatch。装完跑 doctor.sh 可五层自检。

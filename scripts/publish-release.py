@@ -9,7 +9,7 @@
 #  用法：
 #    export GH_TOKEN=ghp_xxxx
 #    python scripts/publish-release.py
-#    python scripts/publish-release.py v2.1.0
+#    python scripts/publish-release.py v2.1.1
 # ============================================================
 import json
 import mimetypes
@@ -58,7 +58,7 @@ def req(method, path, tok, body=None, ok=(200, 201, 204), raw=False, ctype=None)
 
 def read_version():
     p = os.path.join(HERE, "module", "module.prop")
-    v = "v2.1.0"
+    v = "v2.1.1"
     for line in open(p, encoding="utf-8"):
         if line.startswith("version="):
             v = line.split("=", 1)[1].strip()

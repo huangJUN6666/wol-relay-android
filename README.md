@@ -1,5 +1,7 @@
 # WOL Relay · 用一台闲置安卓机做家里的开机跳板
 
+**Root 版 · Magisk / KernelSU / APatch 模块**　（需要 root；不想 root 见 [docs/05](docs/05-没有root怎么办.md)）
+
 人在外面，一个按钮把家里的电脑开起来。
 
 作者：**神仙道**　QQ：**1974147300**
@@ -35,9 +37,10 @@ GitHub 上同类项目基本都是用 Termux 跑个脚本。能跑，但撑不�
 |---|---|---|
 | 进程存活 | 普通 App，被厂商省电策略清掉 | Magisk 模块，root 身份，独立于 App 沙箱 |
 | 开机自启 | 靠 Termux:Boot，经常拉不起来 | 模块 service.sh，开机就执行 |
-| 挂掉恢复 | 手动重启 | 进程退出 3 秒自动重拉 |
+| 挂掉恢复 | 手动重启 | 进程退出自动重拉，连续崩就退避（6s→12s→…→300s） |
 | 隧道守护 | 无 | 每 2 分钟巡检，掉线连着重试 10 轮 |
-| 换网段/搬家 | 手改广播地址 | 自动算本网段广播地址 |
+| 换网段/搬家 | 手改广播地址 | 自动算本网段广播地址，多网卡全发 |
+| 挂着 VPN | 包发进隧道，电脑不醒 | 认隧道网卡（tailscale/wg/tun…）直接跳过 |
 
 代价是**需要 root**。这是硬门槛，不是能绕过去的东西。如果你的备用机没 root，Termux 方案也能用，只是别指望它几个月不出事。
 
@@ -102,10 +105,10 @@ flowchart TD
 ```bash
 # 依赖：go 1.21+、python3（打 zip 用）
 bash scripts/build-module.sh
-# 产物：dist/wol-relay-v2.1.0.zip
+# 产物：dist/wol-relay-v2.1.1.zip
 
 # 推到手机并刷入
-adb push dist/wol-relay-v2.1.0.zip /sdcard/Download/
+adb push dist/wol-relay-v2.1.1.zip /sdcard/Download/
 # 手机上打开 Magisk → 模块 → 从本地安装 → 选这个 zip
 
 # 改配置
@@ -226,6 +229,25 @@ wol-relay-android/
 - **NAT 回环**：在自己家的网络里往自己的公网 IP 发包，运营商会把包 SNAT 回来，看起来成功但走的不是真正的公网路径。所以方式一必须去别人家或公司 WiFi 下测才算数。
 - **Windows 快速启动是最大的坑**。默认开着，关机其实是休眠，网卡断电，WOL 必然失败。这一条排在所有排错的第一位。
 - 只支持 IPv4。IPv6 下的唤醒没做。
+
+## 两个花了我一晚上的坑
+
+记在这里，省得后来的人再踩一遍。
+
+**一、Android/Linux 默认不允许往广播地址发包。** 内核层面 `SO_BROADCAST` 不打开，
+`sendto` 直接返回 `EACCES permission denied`。Go 的 `net.Dial` 不会替你开，
+必须自己接管 socket：用 `net.Dialer.Control` 拿到 fd，`setsockopt` 把
+`SO_BROADCAST` 置 1，然后再连、再写。这个改完才真正能发出去。
+
+**二、挂了代理或 VPN 时，广播地址会算错。** Tailscale 一上线就抢默认路由，
+如果按"默认出口网卡"去算广播，算出来是 `100.x` 隧道网段的广播地址——
+魔术包从隧道出去，绕一圈不知道去哪了，家里电脑当然不醒，
+而日志上写着"发送成功"。
+
+现在的做法是遍历所有物理网卡（`FlagUp`、非 loopback），
+名字以 `tun/tap/tailscale/wg/ppp/ipsec/utun` 开头的一律跳过，
+`100.64.0.0/10` 的地址也跳过，剩下的每块网卡各算一个定向广播，全部发一遍。
+多网卡（比如 WiFi + USB 网卡同时在）也能覆盖到。跑 `doctor.sh` 会把这层单独打出来。
 
 ## 许可
 
