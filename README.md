@@ -125,6 +125,27 @@ bash scripts/build-apk.sh
 # 产物：dist/远程开机.apk
 ```
 
+### 想自己发一份到 GitHub
+
+仓库里带了两个脚本，只用 `api.github.com`，不碰 `github.com` 主站，
+所以挂着不稳定的代理也能传完。
+
+```bash
+export GH_TOKEN=ghp_xxxxxxxx      # classic PAT 勾 repo 即可
+
+python scripts/push-via-api.py    # 建仓库 + 传全部文件
+python scripts/publish-release.py # 打 tag + 发 Release + 传 dist/ 产物
+```
+
+`GH_TOKEN` 用完去 Settings → Developer settings → Personal access tokens
+撤销，别留在 shell 历史里。
+
+如果本机 `git push` 能通，也可以走常规路子：
+
+```bash
+bash scripts/push-github.sh 你的用户名 wol-relay-android
+```
+
 ## App 怎么用
 
 装完什么都不用配，界面自己会带你走：
@@ -188,8 +209,12 @@ wol-relay-android/
 ├── android/app/         App 源码（单 Activity，无第三方库）
 │   └── src/com/wol/remote/MainActivity.java
 ├── scripts/
-│   ├── build-module.sh  交叉编译 + 打模块 zip
-│   └── build-apk.sh     手工打包 APK（不用 Gradle）
+│   ├── build-module.sh   交叉编译 + 打模块 zip
+│   ├── build-apk.sh      手工打包 APK（不用 Gradle）
+│   ├── push-github.sh    走 git push 一键上传（需要 gh 登录）
+│   ├── push-via-api.py   走 REST API 上传（只需 PAT，绕开主站）
+│   ├── publish-release.py 打 tag、发 Release、传产物
+│   └── release.sh        本地打 tag 版
 ├── docs/                六篇文档
 └── .github/workflows/   CI 构建与 Release
 ```
