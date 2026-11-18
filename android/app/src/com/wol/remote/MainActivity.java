@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit;
  *   方式二 · 备用机中继 —— 家里一台常开设备代为广播，不依赖公网映射
  *   自动发现 · 扫描本网段 —— 不知道备用机 IP 时，App 自己去网里找
  *
- * 作者：神仙道vq  QQ 1974147300
+ * 作者：神仙道  QQ 1974147300
  *
  * 这个文件不保留任何真实 IP、MAC、账号。首次打开是空的，
  * 由使用者自己填，填完存在 SharedPreferences 里。
@@ -180,7 +180,7 @@ public class MainActivity extends Activity {
         });
 
         TextView foot = new TextView(this);
-        foot.setText("神仙道vq · QQ 1974147300");
+        foot.setText("神仙道 · QQ 1974147300");
         foot.setTextColor(Color.parseColor("#4B515C"));
         foot.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         foot.setGravity(android.view.Gravity.CENTER);

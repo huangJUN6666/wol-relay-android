@@ -2,7 +2,7 @@
 
 这个项目最硬的限制是 root。但没 root 也不是完全没路走，只是要接受它不如模块稳。
 
-作者：神仙道vq　QQ：1974147300
+作者：神仙道　QQ：1974147300
 
 ---
 
@@ -69,7 +69,7 @@ termux-wake-lock    # 防止被系统休眠
 ```python
 #!/usr/bin/env python3
 # WOL 中继（Termux 版）
-# 作者：神仙道vq  QQ 1974147300
+# 作者：神仙道  QQ 1974147300
 import json
 import socket
 import subprocess

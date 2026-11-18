@@ -3,7 +3,7 @@
 // 跑在一台常开的安卓设备上，收到 HTTP 请求后向局域网广播魔术包。
 // 交叉编译成静态二进制，无运行时依赖，由 Magisk 模块守护。
 //
-// 作者：神仙道vq  QQ 1974147300
+// 作者：神仙道  QQ 1974147300
 //
 // 配置优先级：命令行 flag > config.json > 默认值。
 // MAC 没有默认值，必须由用户填写，程序不会替你猜。
@@ -238,7 +238,7 @@ button:active{transform:scale(.97)}button:disabled{opacity:.6}
 footer{margin-top:36px;font-size:11px;color:#4b515c}</style></head><body>
 <div class="c"><h1>WOL 中继</h1><div class="s">这台设备会向家里局域网广播魔术包</div>
 <button id="b">唤 醒 电 脑</button><div id="m"></div>
-<footer>神仙道vq · QQ 1974147300</footer></div>
+<footer>神仙道 · QQ 1974147300</footer></div>
 <script>
 var b=document.getElementById('b'),m=document.getElementById('m');
 b.onclick=async function(){
