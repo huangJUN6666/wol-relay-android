@@ -1,0 +1,27 @@
+# ---- 构建产物 ----
+dist/
+build/
+
+# ---- 本地环境配置（含真实路径和密码）----
+build.env
+
+# ---- 签名密钥：绝对不能提交 ----
+*.jks
+*.keystore
+android/app/keystore/
+
+# ---- 模块打包的中间目录 ----
+module/wolrelay
+module/wolrelay.*
+
+# ---- 用户自己的配置（含真实 MAC / 令牌）----
+module/config.json
+relay/config.json
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+.idea/
+*.iml

@@ -1,0 +1,10 @@
+{
+  "mac": "AA:BB:CC:DD:EE:FF",
+  "udp_port": 9,
+  "listen": ":8080",
+  "targets": ["255.255.255.255"],
+  "token": "",
+  "repeat": 3,
+  "interval_ms": 120,
+  "auto_broadcast": true
+}
