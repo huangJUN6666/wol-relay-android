@@ -27,14 +27,44 @@ else
 fi
 
 : "${SDK:?build.env 里要设置 SDK（Android SDK 根目录）}"
-: "${BUILD_TOOLS_VERSION:=33.0.2}"
 : "${JDK:?build.env 里要设置 JDK（JDK 11 或 17 的根目录）}"
 : "${KEYSTORE:=$HERE/android/app/keystore/wol.jks}"
 : "${KEY_ALIAS:=wol}"
 : "${OUT_APK:=$HERE/dist/远程开机.apk}"
 
+# build-tools 和 platforms 的版本号不写死 —— 每台机器装的版本都不一样。
+# 没指定就挑目录里最大的那个（版本号按数字排序，不是按字符串）。
+pick_latest() {
+    # $1 = 目录；输出其中数字版本号最大的那个子目录名
+    ls -1 "$1" 2>/dev/null \
+        | grep -E '^[0-9]+(\.[0-9]+)*$' \
+        | sort -t. -k1,1n -k2,2n -k3,3n \
+        | tail -1
+}
+
+if [ -z "$BUILD_TOOLS_VERSION" ]; then
+    BUILD_TOOLS_VERSION=$(pick_latest "$SDK/build-tools")
+fi
+if [ -z "$PLATFORM_VERSION" ]; then
+    # 优先 android-33 及以上，太老的 android.jar 缺新 API
+    PLATFORM_VERSION=$(ls -1 "$SDK/platforms" 2>/dev/null \
+        | grep -E '^android-[0-9]+$' \
+        | sed 's/android-//' \
+        | sort -n \
+        | awk '$1>=33' \
+        | tail -1)
+    [ -z "$PLATFORM_VERSION" ] && PLATFORM_VERSION=$(ls -1 "$SDK/platforms" 2>/dev/null \
+        | grep -E '^android-[0-9]+$' | sed 's/android-//' | sort -n | tail -1)
+fi
+
+if [ -z "$BUILD_TOOLS_VERSION" ] || [ -z "$PLATFORM_VERSION" ]; then
+    echo "SDK 目录里找不到 build-tools 或 platforms：$SDK"
+    echo "用 Android Studio 的 SDK Manager 装一个 build-tools 和任一 platform 即可。"
+    exit 1
+fi
+
 BT="$SDK/build-tools/$BUILD_TOOLS_VERSION"
-ANDROID_JAR="$SDK/platforms/android-33/android.jar"
+ANDROID_JAR="$SDK/platforms/android-$PLATFORM_VERSION/android.jar"
 APP="$HERE/android/app"
 WORK="$HERE/build/apk"
 
@@ -53,6 +83,7 @@ esac
 
 echo "SDK        : $SDK"
 echo "build-tools: $BUILD_TOOLS_VERSION"
+echo "platform   : android-$PLATFORM_VERSION"
 echo "JDK        : $JDK"
 
 rm -rf "$WORK"

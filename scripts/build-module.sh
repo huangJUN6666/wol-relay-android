@@ -33,11 +33,24 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" "$OUT_DIR"
 
 # ---- 1. 编译中继 ----
+# 为什么用 GOOS=linux 而不是 GOOS=android：
+#   Go 1.22 之后 android/arm（32 位）必须开 cgo，本机没装 NDK 就编不过；
+#   android/arm64 虽然能编，但和 linux/arm64 出来的二进制没有区别。
+#   统一用 linux + CGO_ENABLED=0 + netgo，纯静态、无动态库依赖，
+#   放到 Android 上直接跑。/proc、socket、ioctl 这些它用到的接口两边一致。
 for arch in $ARCHS; do
-    echo "[1/3] 编译中继 -> android/$arch"
+    TARGET="linux/$arch"
+    EXTRA=""
+    case "$arch" in
+        arm|armv7)  TARGET="linux/arm"; EXTRA="GOARM=7" ;;
+        arm64|aarch64) TARGET="linux/arm64" ;;
+        amd64|x86_64)  TARGET="linux/amd64" ;;
+    esac
+    echo "[1/3] 编译中继 -> $TARGET"
     ( cd relay && \
-      GOOS=android GOARCH="$arch" CGO_ENABLED=0 \
-      "$GO" build -trimpath -ldflags "-s -w" -o "$STAGE/wolrelay.$arch" . )
+      env GOOS=linux GOARCH="$arch" $EXTRA CGO_ENABLED=0 \
+      "$GO" build -trimpath -tags netgo,osusergo -ldflags "-s -w" \
+          -o "$STAGE/wolrelay.$arch" . )
     echo "      $(ls -lh "$STAGE/wolrelay.$arch" | awk '{print $5}')"
 done
 
@@ -64,6 +77,9 @@ chmod 755 "$STAGE/wolrelay"
 for arch in $ARCHS; do
     [ "$arch" = "$PRIMARY" ] && continue
     mv "$STAGE/wolrelay.$arch" "$STAGE/wolrelay.$arch.bin"
+    # 权限也要给 —— customize.sh 是 mv 改名，权限跟着文件走。
+    # 这里若是 644，装到 32 位设备上换了名还是不能执行。
+    chmod 755 "$STAGE/wolrelay.$arch.bin"
 done
 
 chmod -R 755 "$STAGE"
@@ -84,10 +100,12 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             rel = os.path.relpath(full, stage).replace('\\', '/')
             # 只有需要执行的文件给 755：
             #   *.sh（customize / service / doctor）
-            #   wolrelay（中继二进制）
+            #   wolrelay / wolrelay.<架构>.bin（中继二进制，含备用架构那份）
             #   update-binary（Magisk 安装入口）
             # 其余给 644，配置和 prop 不需要执行权限
-            need_x = (rel.endswith('.sh') or rel == 'wolrelay'
+            need_x = (rel.endswith('.sh')
+                      or rel == 'wolrelay'
+                      or rel.startswith('wolrelay.') and rel.endswith('.bin')
                       or rel.endswith('update-binary'))
             info = zipfile.ZipInfo(rel)
             info.external_attr = (0o755 if need_x else 0o644) << 16

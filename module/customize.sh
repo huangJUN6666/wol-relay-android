@@ -44,6 +44,26 @@ set_perm "$MODPATH/customize.sh" 0 0 0755
 set_perm "$MODPATH/doctor.sh" 0 0 0755
 set_perm "$MODPATH/wolrelay" 0 0 0755
 
+# ---- 按 CPU 架构挑中继 ----
+# 包里同时带了 arm64 和 32 位 arm 两个二进制（wolrelay / wolrelay.arm.bin）。
+# arm64 设备上跑 arm64 的功耗低一点；纯 32 位的老设备拿 arm64 会直接
+# 报 "not executable: 64-bit ELF" 起不来，所以这里必须按 abi 换掉。
+# $ARCH 是 Magisk 装模块时提供的变量：arm / arm64 / x86 / x64。
+if [ "$ARCH" = "arm" ]; then
+    if [ -f "$MODPATH/wolrelay.arm.bin" ]; then
+        mv -f "$MODPATH/wolrelay.arm.bin" "$MODPATH/wolrelay"
+        set_perm "$MODPATH/wolrelay" 0 0 0755
+        ui_print "- 架构：32 位 arm，已换用 arm 版中继"
+    else
+        ui_print "! 你是 32 位 arm 设备，但包里没带 arm 版中继"
+        ui_print "! 模块会装上但服务起不来，换 arm64 设备或自行编译"
+    fi
+else
+    # arm64 或其他：删掉 32 位那份，省几 MB
+    rm -f "$MODPATH/wolrelay.arm.bin"
+    ui_print "- 架构：$ARCH，使用 64 位中继"
+fi
+
 # 配置放 /data/adb/wol-relay/，不放模块目录。
 # Magisk 升级模块会整个换掉 $MODPATH，放里面的 config.json 会跟着丢，
 # 用户改好的 MAC 就白填了。模块目录里的 example 只是种子。
