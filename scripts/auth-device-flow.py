@@ -132,12 +132,24 @@ def poll():
         sys.exit(1)
     deadline = time.time() + left
     print("等待授权…（码 %s，还剩 %d 分钟）" % (d["user_code"], left // 60))
+    net_fail = 0
     while time.time() < deadline:
-        r = post("https://github.com/login/oauth/access_token", {
-            "client_id": CLIENT_ID,
-            "device_code": d["device_code"],
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-        })
+        # 网络抖一下不能整个退出。这台机器的代理时不时返 502，
+        # 用户那边授权已经点了，这边崩掉就永远拿不到 token。
+        try:
+            r = post("https://github.com/login/oauth/access_token", {
+                "client_id": CLIENT_ID,
+                "device_code": d["device_code"],
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            })
+            net_fail = 0
+        except Exception as e:
+            net_fail += 1
+            if net_fail in (1, 5, 20):
+                print("  网络不通，继续重试（第 %d 次）：%s"
+                      % (net_fail, str(e)[:70]))
+            time.sleep(min(interval * 2, 30))
+            continue
         if r.get("access_token"):
             tok = r["access_token"]
             with open(TOKEN_FILE, "w", encoding="utf-8") as f:
