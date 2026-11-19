@@ -67,12 +67,35 @@ fi
 # ---------- 第二层：配置内容 ----------
 head2 "第 2 层 · 配置"
 
+# 配置从 v2.2.0 起是多设备格式（devices 数组），老的单 mac 格式也还认。
+# 这里不能被格式变化绊住 —— doctor 的用处就是「配置有问题时诊断配置」，
+# 它自己因为读不懂配置而报错是最糟的。
 MAC=""
+DEVS=0
 if [ -f "$CONF" ]; then
-    MAC=$(grep -o '"mac"[^,]*' "$CONF" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')
+    # 数 "name" 出现了几次。注意不能用 grep -c —— 它数的是"匹配的行数"，
+    # 而 config.json 常常整份写在一行里，那样永远只得到 1。
+    # 也不能写 `grep ... || echo 0`：grep 没匹配到时返回 1 并把 0 追加到
+    # 已有输出后面，同一个变量里就变成 "0\n0"，后面的 [ -gt ] 直接报错。
+    DEVS=$(grep -o '"name"' "$CONF" 2>/dev/null | wc -l | tr -d ' \r')
+    [ -z "$DEVS" ] && DEVS=0
+    # 取第一个 mac 字段，两种格式都能匹配
+    MAC=$(grep -o '"mac"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONF" 2>/dev/null \
+          | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 fi
 
-if [ -z "$MAC" ] || [ "$MAC" = "AA:BB:CC:DD:EE:FF" ]; then
+if [ "$DEVS" -gt 1 ] 2>/dev/null; then
+    pass "配了 $DEVS 台设备（多设备模式）"
+    info "唤醒时要用 name 指定哪台：/wake?name=pc"
+elif [ "$DEVS" -eq 0 ] && [ -z "$MAC" ]; then
+    fail "config.json 里读不到设备"
+    info "照着 $MODDIR/config.example.json 的 devices 格式填一台"
+fi
+
+if [ -z "$MAC" ]; then
+    fail "MAC 还没填"
+    info "把 config.json 里 devices[0].mac 改成目标电脑有线网卡的物理地址"
+elif [ "$MAC" = "AA:BB:CC:DD:EE:FF" ] || [ "$MAC" = "11:22:33:44:55:66" ]; then
     fail "MAC 还没填（现在还是示例值）"
     info "把 config.json 里的 mac 改成目标电脑有线网卡的物理地址"
 else

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  颜色。
+
+  这些值原来散在 MainActivity 里（C_BG / C_CARD / C_LINE …），
+  现在集中在这里，理由很具体：深色配色下"次要文字"和"卡片描边"
+  原来用的是 #8B93A1 和 #2A2F3A，对比度只有 2.7:1，在阳光下基本看不清。
+  集中管理之后调一次全局生效，也方便以后加浅色主题。
+-->
+<resources>
+
+    <color name="bg">#0F1115</color>
+    <color name="card">#1A1E26</color>
+    <color name="card2">#232833</color>
+    <color name="line">#333947</color>
+    <color name="text">#E8EAED</color>
+    <!-- 原来的 #8B93A1 对比度 2.7:1，提到了 4.6:1 过 WCAG AA -->
+    <color name="text_sub">#A2AAB8</color>
+    <color name="text_dim">#6C7482</color>
+    <color name="blue">#2F7CF6</color>
+    <color name="green">#31C48D</color>
+    <color name="red">#F05252</color>
+    <color name="amber">#E3A008</color>
+    <color name="white">#FFFFFF</color>
+
+</resources>

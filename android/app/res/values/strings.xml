@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  界面文案。
+
+  抽到资源里的理由不是"规范要求"，是为了下一步能改：
+  以前这些字全写死在 Java 里，想改一句提示要重新编译整个 App，
+  而且同一个意思在三个地方各写了一遍，改一处漏两处的情况已经发生过
+  （"电脑大约 10~20 秒起来"这句在中继成功和直连成功里说的不一样）。
+
+  带运行时数值的句子（"已开机 · 23 秒"）仍然在 Java 里拼 ——
+  那属于结果，不属于文案。
+-->
+<resources>
+
+    <!-- 标题 -->
+    <string name="app_name">远程开机</string>
+    <string name="title">远程开机</string>
+    <string name="subtitle">先点「一键自检」，它会把能走的路找出来</string>
+    <string name="footer">神仙道 · QQ 1974147300</string>
+
+    <!-- 按钮 -->
+    <string name="btn_selfcheck">一键自检</string>
+    <string name="btn_wake">唤 醒</string>
+    <string name="btn_discover">自动发现备用机</string>
+    <string name="btn_send_direct">发送魔术包</string>
+    <string name="btn_add_device">添加设备</string>
+    <string name="btn_load_devices">从中继读取设备</string>
+    <string name="btn_stop">停止等待</string>
+
+    <!-- 分区标题 -->
+    <string name="sec_devices">目标设备</string>
+    <string name="sec_relay">方式二 · 备用机中继</string>
+    <string name="sec_direct">方式一 · 直连公网 UDP</string>
+
+    <!-- 输入标签 -->
+    <string name="lbl_mac">网卡 MAC</string>
+    <string name="lbl_relay">中继地址（可填多个，空格分隔）</string>
+    <string name="lbl_token">访问令牌（中继没设就留空）</string>
+    <string name="lbl_public_ip">公网 IP / DDNS 域名</string>
+    <string name="lbl_public_port">UDP 端口</string>
+    <string name="lbl_label">名字（随便起，方便自己认）</string>
+    <string name="lbl_host">固定 IP（可选，跨网段时填）</string>
+
+    <!-- 提示 -->
+    <string name="hint_mac">填电脑有线网卡的物理地址。Windows 下用 ipconfig /all 看「物理地址」，形如 AA:BB:CC:DD:EE:FF。</string>
+    <string name="hint_relay">家里一台常开的设备跑中继服务，收到请求后在局域网内广播。跟公网 IP、端口映射都没关系，出门在外用这条最省事。</string>
+    <string name="hint_direct">需要光猫或路由器把 UDP 9 端口映射到电脑，或者把电脑设成 DMZ 主机。公网 IP 变了就要改，适合有固定 IP 或 DDNS 的情况。</string>
+    <string name="hint_no_device">还没有设备。先点「添加设备」填一个 MAC，或者连上中继后点「从中继读取设备」。</string>
+
+    <!-- 首次引导 -->
+    <string name="first_run">第一次用，按这个顺序来：\n\n1  点「添加设备」，填电脑网卡的 MAC\n2  电脑和备用机都开机，连同一个 WiFi\n3  点「一键自检」\n\n自检会自己扫一遍局域网，把备用机找出来。找不到也没关系，结果里会说卡在哪一层。</string>
+
+    <!-- 自检报告里的固定词 -->
+    <string name="sc_local">本机</string>
+    <string name="sc_relay">中继</string>
+    <string name="sc_scan">扫描</string>
+    <string name="sc_direct">方式一</string>
+    <string name="sc_none">没有配置</string>
+    <string name="sc_connecting">正在自检…\n\n先扫本机所在的网段，再逐个验证配置的地址</string>
+
+    <!-- 结论 -->
+    <string name="verdict_no_net">本机没有拿到局域网地址。\n先连上 WiFi，或者确认手机没开飞行模式。</string>
+    <string name="verdict_no_relay">结论：没找到中继\n检查备用机是不是开着机、连着同一个 WiFi，中继服务是不是在跑。</string>
+    <string name="verdict_ok">结论：可以发\n点「唤醒」，然后看着它起来。</string>
+    <string name="verdict_no_mac">结论：中继通了，但你没填 MAC\n先添加一台设备，把电脑网卡的 MAC 填上。</string>
+
+</resources>

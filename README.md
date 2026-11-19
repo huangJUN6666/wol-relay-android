@@ -1,8 +1,20 @@
-# WOL Relay · 用一台闲置安卓机做家里的开机跳板
+# WOL Relay · 人在外面，一个按钮把家里的电脑开起来
 
-**Root 版 · Magisk / KernelSU / APatch 模块**　（需要 root；不想 root 见 [docs/05](docs/05-没有root怎么办.md)）
+**发完包会真的去确认「醒没醒」** —— 不是「已广播，大概 10~20 秒起来」，
+是 **「已开机 · 23 秒」**。
 
-人在外面，一个按钮把家里的电脑开起来。
+两种装法，**不需要 root**：
+
+| | 装在哪 | 需要 root |
+|---|---|---|
+| **裸二进制**（推荐） | 路由器 / NAS / 树莓派 / 软路由 / 旧笔记本，任何常开的 Linux | **不需要** |
+| **Magisk 模块** | 一台能 root 的闲置安卓机 | 需要 |
+
+一条命令装好（自动识别架构和启动方式，配好开机自启）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huangJUN6666/wol-relay-android/main/scripts/install.sh | sudo sh
+```
 
 作者：**神仙道**　QQ：**1974147300**
 
@@ -14,7 +26,7 @@
 
 <p align="center">
   <a href="https://github.com/huangJUN6666/wol-relay-android/releases/latest"><img src="https://img.shields.io/github/v/release/huangJUN6666/wol-relay-android?color=red" alt="最新版本"></a>
-  <img src="https://img.shields.io/badge/root-Magisk%20%2F%20KernelSU%20%2F%20APatch-red" alt="需要 root">
+  <img src="https://img.shields.io/badge/root-%E4%B8%8D%E9%9C%80%E8%A6%81-red" alt="不需要 root">
   <img src="https://img.shields.io/badge/%E4%B8%8D%E9%9C%80%E5%85%AC%E7%BD%91IP-%E6%97%A0%E9%9C%80%E7%AB%AF%E5%8F%A3%E6%98%A0%E5%B0%84-red" alt="不需要公网 IP">
 </p>
 
@@ -22,52 +34,79 @@
 
 ## 这东西解决什么问题
 
-Wake-on-LAN 本身很简单，往局域网广播一个魔术包就行。麻烦在于：**你在外面，广播进不了家门。**
+Wake-on-LAN 本身很简单，往局域网广播一个魔术包就行。麻烦在于两件事：
 
-常见的绕法有三种：
+1. **你在外面，广播进不了家门。**
+2. **包发出去了，但没人告诉你电脑到底醒没醒。**
+
+第一件事常见的绕法有三种：
 
 - 路由器端口映射 + DDNS —— 要公网 IP，多数宽带已经没有了
 - 路由器刷 OpenWrt 跑 WOL 插件 —— 得先能刷，还得路由器支持
 - 电脑装个联网插座 —— 电是来了，但断电关机对硬盘不友好
 
-这个项目的做法是：**留一台旧手机在家常开，让它替你在局域网里发这个包。** 你只需要能连上那台手机。
+这个项目的做法是：**留一台常开的设备在家，让它替你在局域网里发这个包。**
+
+第二件事是**所有 WOL 工具都不做的那一环**，也是这个项目和它们的区别：
 
 ```
   你在外面                    家里
  ┌─────────┐              ┌──────────────┐        ┌──────────┐
- │  手机   │  ① 请求      │  备用机      │  ② 广播 │  电脑    │
- │  App    │ ───────────► │  中继服务    │ ──────► │ 网卡唤醒 │
+ │  手机   │  ① 请求      │  中继        │  ② 广播 │  电脑    │
+ │  App    │ ───────────► │  (常开的设备) │ ──────► │ 网卡上电 │
  └─────────┘  Tailscale   └──────────────┘  UDP 9  └──────────┘
-              或局域网           常开
+      ▲                          │                      │
+      └──── ④ 已开机 · 23 秒 ─────┘  ③ 查 ARP + 探端口 ◄─┘
 ```
+
+中继在发完包之后不会就此收工，它会继续盯：
+
+1. **查 ARP**（2~5 秒就有）—— 网卡上电了，比系统起来早十几秒
+2. **探端口**（445 / 3389 / 22 / 80 / 443，任一通即算醒）—— 系统真的起来了
+3. 两者都没有才扫网段兜底，且**必须回查 ARP 核验 MAC**
+
+所以 App 上显示的不是「已广播」，而是 **「已开机 · 23 秒」**。
+
+**没醒的时候它也不只说「超时」**，而是会告诉你是哪一侧的问题：
+
+- ARP 里从头到尾没出现那个 MAC → 网络侧（不同网段、网线没插、路由器没转发）
+- ARP 出现了但端口一直连不上 → 电脑侧（BIOS 设置、Windows 快速启动）
+- 3 秒内就通了 → 它本来就开着，不会谎报「已开机 · 1 秒」
 
 ## 跟其他方案比，区别在哪
 
-GitHub 上同类项目基本都是用 Termux 跑个脚本。能跑，但撑不住：
+GitHub 上同类项目基本都是用 Termux 跑个 Python 脚本。能跑，但撑不住，而且只会告诉你「包发出去了」：
 
-| | Termux 方案 | 本项目 |
+| | 常见的 Termux 脚本 | 本项目 |
 |---|---|---|
-| 进程存活 | 普通 App，被厂商省电策略清掉 | Magisk 模块，root 身份，独立于 App 沙箱 |
-| 开机自启 | 靠 Termux:Boot，经常拉不起来 | 模块 service.sh，开机就执行 |
-| 挂掉恢复 | 手动重启 | 进程退出自动重拉，连续崩就退避（6s→12s→…→300s） |
-| 隧道守护 | 无 | 每 2 分钟巡检，掉线连着重试 10 轮 |
+| **确认醒没醒** | 无，只说「已发送」 | **ARP + TCP 双重确认，报「已开机 · N 秒」** |
+| **失败归因** | 无 | **区分网络侧 / 电脑侧** |
+| **多台设备** | 一个脚本一台机 | **一台中继管多台，`/wake?name=nas`** |
+| **装在哪** | 只能安卓 | **路由器 / NAS / 树莓派 / 软路由 / 安卓，全都能** |
+| **需要 root** | 否 | **否**（Magisk 模块是可选方案） |
+| 进程存活 | 普通 App，被厂商省电策略清掉 | systemd / procd 托管，或 Magisk 模块 root 常驻 |
+| 开机自启 | 靠 Termux:Boot，经常拉不起来 | 系统级服务，或模块 service.sh |
+| 挂掉恢复 | 手动重启 | 自动重拉，连续崩就退避（6s→12s→…→300s） |
 | 换网段/搬家 | 手改广播地址 | 自动算本网段广播地址，多网卡全发 |
 | 挂着 VPN | 包发进隧道，电脑不醒 | 认隧道网卡（tailscale/wg/tun…）直接跳过 |
 
-代价是**需要 root**。这是硬门槛，不是能绕过去的东西。如果你的备用机没 root，Termux 方案也能用，只是别指望它几个月不出事。
+**为什么唤醒确认用 TCP 不用 ping**：ICMP 要 raw socket，非 root 跑不了。
+这一条直接决定了能不能做到「不需要 root」—— 用 ping 的话，
+确认功能就只能 root 用，那免 root 版就残了一半。
 
 ## 需要什么
 
 **必须在手边的：**
 
-- 一台能 root 的安卓机（旧的就行，性能无所谓，能连 WiFi 就够）
-- 家里那台电脑，有线网卡，主板 BIOS 支持网络唤醒
+- **一台常开的 Linux 设备** —— 路由器（OpenWrt/爱快）、NAS、树莓派、软路由、旧笔记本，任选一台
+  （只有安卓机也行，能 root 用 Magisk 模块，不能 root 用 Termux 但会掉）
+- 家里那台电脑，**有线网卡**，主板 BIOS 支持网络唤醒
 - 家里的路由器管理密码
 
 **软件：**
 
-- 备用机：Magisk / KernelSU / APatch 任一
-- 手机端 App：本仓库 Releases 里的 `WOL-Relay-App-v2.1.2.apk`
+- 中继：不需要额外依赖，一个静态二进制
+- 手机端 App：本仓库 Releases 里的 `WOL-Relay-App-v2.2.0.apk`
 - 外网访问（可选）：Tailscale
 
 ## 整体步骤
@@ -79,23 +118,24 @@ flowchart TD
     B -->|不支持| Z1[换 PCIe 网卡或放弃]
     C --> D[Windows 关掉快速启动]
     D --> E[设备管理器调网卡电源管理]
-    E --> F{备用机有 root 吗}
-    F -->|有| G[刷入 Magisk 模块]
-    F -->|没有| H[用 Termux 方案<br/>见 docs/05]
+    E --> F{家里有常开的<br/>Linux 设备吗}
+    F -->|有 路由器/NAS/树莓派| G["一条命令装中继<br/>curl ... | sudo sh"]
+    F -->|只有安卓机| H["Magisk 模块（能 root）<br/>或 Termux（不能 root）<br/>见 docs/05"]
     G --> I[改 config.json 填 MAC]
-    I --> J[重启备用机]
-    J --> K[跑 doctor.sh 自检]
-    K --> L{五层全绿?}
+    H --> I
+    I --> J[重启服务]
+    J --> K[跑 -doctor 自检]
+    K --> L{全绿?}
     L -->|否| M[按提示修<br/>docs/04 排错]
     M --> K
     L -->|是| N[装 App 填参数]
     N --> O{只在家里用<br/>还是外面也要用}
-    O -->|只在家里| P[填备用机局域网 IP]
+    O -->|只在家里| P[填中继局域网 IP]
     O -->|外面也要| Q[装 Tailscale 并登录]
     Q --> R[填 100.x 地址]
     P --> S[测试：电脑关机后点唤醒]
     R --> S
-    S --> T{电脑起来了?}
+    S --> T{显示 已开机 · N 秒?}
     T -->|否| M
     T -->|是| U[完成]
 ```
@@ -117,10 +157,10 @@ flowchart TD
 ```bash
 # 依赖：go 1.21+、python3（打 zip 用）
 bash scripts/build-module.sh
-# 产物：dist/wol-relay-v2.1.2.zip
+# 产物：dist/wol-relay-v2.2.0.zip
 
 # 推到手机并刷入
-adb push dist/wol-relay-v2.1.2.zip /sdcard/Download/
+adb push dist/wol-relay-v2.2.0.zip /sdcard/Download/
 # 手机上打开 Magisk → 模块 → 从本地安装 → 选这个 zip
 
 # 改配置
@@ -137,7 +177,7 @@ App 那边：
 ```bash
 cp build.env.example build.env   # 填本机 SDK / JDK 路径
 bash scripts/build-apk.sh
-# 产物：dist/WOL-Relay-App-v2.1.2.apk
+# 产物：dist/WOL-Relay-App-v2.2.0.apk
 ```
 
 ### 想自己发一份到 GitHub

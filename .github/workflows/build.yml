@@ -34,10 +34,65 @@ jobs:
           chmod +x scripts/build-module.sh
           GO=go ARCHS="arm64 arm" bash scripts/build-module.sh
 
+      # ---- 免 root 版：给路由器 / NAS / 树莓派 / 旧笔记本用的裸二进制 ----
+      #
+      # 这一段是"受众数量级差别"的来源。原来只有 Magisk 模块，用的人必须
+      # 有一台 root 过的安卓机。而中继本质上只是个 30KB 的静态二进制，
+      # 换任何一个常开的 Linux 都能跑 —— 门槛是发布方式造成的，不是技术造成的。
+      #
+      # 覆盖到的架构说明：
+      #   amd64   —— 任何 PC / 服务器 / 群晖 x86 机型 / Docker
+      #   arm64   —— 树莓派 3/4/5、多数 ARM NAS、电视盒子、arm64 路由
+      #   armv7   —— 树莓派 2、老式 ARM NAS
+      #   armv6   —— 树莓派 1 / Zero（存量很大，很多人在拿它做小服务）
+      #   386     —— 极老的 x86 设备
+      #   mipsle  —— 大量家用路由器（MT7621 之类）是 mipsle
+      #   mips    —— 另一批路由器（大端）
+      # 每个多几行 YAML，换来的是"有任意一台常开 Linux 设备就能用"。
+      - name: 编译免 root 版多架构二进制
+        run: |
+          set -e
+          mkdir -p dist/native
+          cd relay
+          # GOARM/GOAMD64 都是默认值，不额外调 —— 调高了反而在老设备上跑不起来
+          for t in \
+              amd64:amd64 \
+              arm64:arm64 \
+              armv7:arm \
+              armv6:arm \
+              "386:386" \
+              mipsle:mipsle \
+              mips:mips
+          do
+            name="${t%%:*}"
+            goarch="${t##*:}"
+            extra=""
+            [ "$name" = armv7 ] && extra="GOARM=7"
+            [ "$name" = armv6 ] && extra="GOARM=6"
+            echo "--- linux/$name"
+            env GOOS=linux GOARCH="$goarch" $extra CGO_ENABLED=0 \
+              go build -trimpath -tags netgo,osusergo -ldflags "-s -w" \
+              -o "../dist/native/wolrelay-linux-$name" .
+          done
+          ls -lh ../dist/native/
+
+      # 校验和不是形式主义：用户会 `curl | sh`，拷到路由器上跑。
+      # 没有 SHA256 的话，下错了架构只会看到 "Exec format error"，
+      # 而这个脚本会先跑一次 -version 来确认能执行，两者配合才能定位问题。
+      - name: 生成校验和
+        run: |
+          cd dist/native
+          sha256sum wolrelay-linux-* > SHA256SUMS
+
       - uses: actions/upload-artifact@v4
         with:
           name: module
           path: dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native
+          path: dist/native/*
 
   # APK 需要 SDK，放在单独 job 里，失败了不影响模块产物
   apk:
@@ -120,20 +175,57 @@ jobs:
           # 产物名字里直接带方案类型，下载的人一眼知道自己在拿哪个
           files: |
             dist/wol-relay-*.zip
+            dist/native/wolrelay-linux-*
+            dist/native/SHA256SUMS
             dist/*.apk
           body: |
             ## 下载哪个
 
+            三种装法，按你的设备挑一个：
+
             | 文件 | 方案 | 需要 root | 说明 |
             |---|---|---|---|
-            | `wol-relay-${{ github.ref_name }}.zip` | **Root 版** | 是 | Magisk / KernelSU / APatch 模块，装到闲置安卓机上当中继 |
-            | `WOL-Relay-App-*.apk` | 客户端 | 否 | 装在你自己手机上，用来触发唤醒。**不装也行**，浏览器直接开中继地址同样能用 |
+            | `wol-relay-${{ github.ref_name }}.zip` | **Magisk 模块** | 是 | 装在闲置安卓机上。进程挂了自动拉起，最省心 |
+            | `wolrelay-linux-*` | **裸二进制** | **否** | 装在路由器 / NAS / 树莓派 / 旧笔记本上。`curl \| sh` 一键装 |
+            | `WOL-Relay-App-*.apk` | 客户端 | 否 | 装在你自己手机上触发唤醒。**不装也行**，浏览器直接开中继地址同样能用 |
 
-            **Root 版**是主力方案：模块由 `magiskd` 以 root 身份常驻，不受系统省电策略影响，进程挂了会自动拉起。
+            ---
 
-            技术上是标准 UDP 魔术包（102 字节），**没有用 raw socket、不做抓包**——写清楚免得误会。
+            ### 没有 root 的机器用这个（推荐大多数人）
 
-            没有 root 的机器看 [docs/05-没有root怎么办.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/05-没有root怎么办.md)，里面有 Termux 方案，但要接受它会被系统清后台。
+            只要有一台常开的 Linux 设备就行 —— 路由器、NAS、树莓派、旧笔记本、Docker 宿主机。
+            一条命令，装完自动配好开机自启（systemd / OpenWrt procd / SysV 都会自动识别）：
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/scripts/install.sh | sudo sh
+            ```
+
+            想先看看它会做什么，加 `--dry-run`：
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/scripts/install.sh | sudo sh -s -- --dry-run
+            ```
+
+            选哪个架构：
+
+            | 文件 | 适合 |
+            |---|---|
+            | `wolrelay-linux-amd64` | 任何 PC / 服务器 / 群晖 x86 / Docker |
+            | `wolrelay-linux-arm64` | 树莓派 3/4/5、多数 ARM NAS、电视盒子 |
+            | `wolrelay-linux-armv7` | 树莓派 2、老式 ARM NAS |
+            | `wolrelay-linux-armv6` | 树莓派 1 / Zero |
+            | `wolrelay-linux-mipsle` | 大量家用路由器（MT7621 等） |
+            | `wolrelay-linux-mips` | 另一批（大端）路由器 |
+            | `wolrelay-linux-386` | 很老的 x86 |
+
+            不知道自己是哪个：`uname -m`，然后按 `x86_64→amd64`、`aarch64→arm64`、
+            `armv7l→armv7` 对一下。装脚本会自动识别，一般不用管。
+
+            ---
+
+            **技术上是标准 UDP 魔术包（102 字节），没有用 raw socket、不做抓包**——写清楚免得误会。
+            唤醒确认用的是 TCP 探测（445/3389/22/80/443）而不是 ping，原因同上：ICMP 要 raw socket，
+            非 root 跑不了。
 
             ## 装之前先确认三件事
 
@@ -143,22 +235,37 @@ jobs:
 
             三条缺一条，后面怎么配都没用。
 
-            ## 刷完改 MAC
+            ## 改 MAC
 
-            配置在 `/data/adb/wol-relay/config.json`，不是模块目录里。
+            **Magisk 模块**的配置在 `/data/adb/wol-relay/config.json`，不是模块目录里。
             这么放是因为 Magisk 升级模块会把模块目录整个换掉，配置放里面会丢。
 
             ```bash
             su -c 'vi /data/adb/wol-relay/config.json'
-            # 把 mac 改成你要唤醒的那台电脑的网卡地址
             ```
 
-            改完重启，然后跑自检：
+            **免 root 版**的配置在 `/etc/wolrelay/config.json`：
 
             ```bash
-            su -c 'sh /data/adb/modules/wol-relay/doctor.sh'
+            sudo vi /etc/wolrelay/config.json
+            sudo systemctl restart wolrelay     # OpenWrt 用 /etc/init.d/wolrelay restart
             ```
 
-            输出里第一个 `[X]` 就是卡住的地方。
+            现在支持多台设备了，`devices` 是个数组：
+
+            ```json
+            {"devices": [
+              {"name": "pc",  "mac": "AA:BB:CC:DD:EE:FF"},
+              {"name": "nas", "mac": "11:22:33:44:55:66"}
+            ]}
+            ```
+
+            之后 `http://中继地址:8080/wake?name=nas` 就能单独开某台。
+
+            改完跑自检，输出里第一个 `[X]` 就是卡住的地方：
+
+            ```bash
+            sudo /opt/wolrelay/wolrelay -config /etc/wolrelay/config.json -doctor
+            ```
 
             完整变更见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)。

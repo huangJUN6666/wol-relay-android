@@ -1,360 +1,51 @@
 // wolrelay - 家庭网络内的 WOL 中继
 //
-// 跑在一台常开的安卓设备上，收到 HTTP 请求后向局域网广播魔术包。
-// 交叉编译成静态二进制，无运行时依赖，由 Magisk 模块守护。
+// 跑在一台常开的设备上（安卓手机 / 路由器 / NAS / 树莓派 / 旧笔记本），
+// 收到 HTTP 请求后向局域网广播魔术包，然后盯着目标到底醒没醒。
 //
 // 作者：神仙道  QQ 1974147300
 //
 // 配置优先级：命令行 flag > config.json > 默认值。
-// MAC 没有默认值，必须由用户填写，程序不会替你猜。
+//
+// 文件分工：
+//
+//	config.go   配置读取与设备表
+//	net.go      广播地址计算、魔术包发送
+//	confirm.go  唤醒确认（ARP -> TCP -> 扫网段）
+//	http.go     HTTP 接口
+//	page.go     浏览器单页
+//	util.go     魔术包拼装、MAC 打码与指纹
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 )
 
-// ---- 配置 ----
-
-type Config struct {
-	MAC        string   `json:"mac"`
-	UDPPort    int      `json:"udp_port"`
-	Listen     string   `json:"listen"`
-	Targets    []string `json:"targets"`
-	Token      string   `json:"token"`
-	Repeat     int      `json:"repeat"`
-	IntervalMS int      `json:"interval_ms"`
-	// AutoBroadcast 打开后会根据当前网卡地址自动算出本网段的广播地址，
-	// 这样用户搬了家、换了路由器也不用改配置。
-	AutoBroadcast *bool `json:"auto_broadcast"`
-}
-
-func defConfig() Config {
-	t := true
-	return Config{
-		UDPPort:       9,
-		Listen:        ":8080",
-		Targets:       []string{"255.255.255.255"},
-		Repeat:        3,
-		IntervalMS:    120,
-		AutoBroadcast: &t,
-	}
-}
-
-func loadConfig(path string) (Config, error) {
-	c := defConfig()
-	if path == "" {
-		return c, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return c, nil
-		}
-		return c, err
-	}
-	if err := json.Unmarshal(data, &c); err != nil {
-		return c, fmt.Errorf("config.json 格式错误: %w", err)
-	}
-	if c.UDPPort <= 0 {
-		c.UDPPort = 9
-	}
-	if c.Listen == "" {
-		c.Listen = ":8080"
-	}
-	if c.Repeat <= 0 {
-		c.Repeat = 1
-	}
-	return c, nil
-}
-
-// ---- 魔术包 ----
-
-func magicPacket(mac string) ([]byte, error) {
-	hex := strings.NewReplacer(":", "", "-", "", " ", "", ".", "").Replace(mac)
-	if len(hex) != 12 {
-		return nil, fmt.Errorf("MAC 必须是 12 位十六进制，收到的是 %q", mac)
-	}
-	hw := make([]byte, 6)
-	for i := 0; i < 6; i++ {
-		var b int
-		if _, err := fmt.Sscanf(hex[i*2:i*2+2], "%02x", &b); err != nil {
-			return nil, fmt.Errorf("MAC 第 %d 段解析失败: %v", i+1, err)
-		}
-		hw[i] = byte(b)
-	}
-	pkt := make([]byte, 102)
-	for i := 0; i < 6; i++ {
-		pkt[i] = 0xFF
-	}
-	for i := 1; i <= 16; i++ {
-		copy(pkt[i*6:], hw)
-	}
-	return pkt, nil
-}
-
-// ---- 广播目标 ----
-
-// vpnLike 判断这块网卡是不是"看起来像隧道"。
-//
-// 为什么一定要排掉：
-// 这个项目推荐用 Tailscale 做外网入口。Tailscale 起来之后会抢到默认路由，
-// 如果还按"默认出口网卡"去算广播地址，算出来的是 100.x 隧道网段的广播，
-// 魔术包会从隧道里发出去，家里的电脑一个字节都收不到。
-// 这是最容易踩、又最难查的一类问题：日志显示"发送成功"，电脑就是不醒。
-var vpnLike = []string{"tun", "tap", "tailscale", "wg", "ppp", "ipsec", "utun"}
-
-func looksLikeVPN(name string) bool {
-	n := strings.ToLower(name)
-	for _, p := range vpnLike {
-		if strings.HasPrefix(n, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// allSubnetBroadcasts 列出本机所有物理网卡对应的定向广播地址。
-//
-// 不再只认"默认出口"那一块网卡，而是全都算一遍：
-// 备机可能同时连着 WiFi 和 USB 网络共享，也可能插了 USB 网卡接有线。
-// 全部发一遍成本极低（几个 UDP 包），但能省掉大量"为什么不醒"的排查。
-func allSubnetBroadcasts() []string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, ifi := range ifaces {
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if looksLikeVPN(ifi.Name) {
-			continue
-		}
-		addrs, err := ifi.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			ipnet, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip4 := ipnet.IP.To4()
-			if ip4 == nil || ip4.IsLoopback() {
-				continue
-			}
-			// 隧道地址段（Tailscale 的 100.64/10）也要排掉：
-			// 有些机型上隧道网卡名字看不出来，只能靠地址段判断。
-			if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
-				continue
-			}
-			mask := net.IP(ipnet.Mask).To4()
-			if mask == nil {
-				continue
-			}
-			bcast := make(net.IP, 4)
-			for i := 0; i < 4; i++ {
-				bcast[i] = ip4[i] | ^mask[i]
-			}
-			s := bcast.String()
-			if !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-				log.Printf("网卡 %s（%s）-> 广播地址 %s", ifi.Name, ipnet.String(), s)
-			}
-		}
-	}
-	return out
-}
-
-func resolveTargets(c Config) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			return
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	for _, t := range c.Targets {
-		add(t)
-	}
-	if c.AutoBroadcast != nil && *c.AutoBroadcast {
-		b := allSubnetBroadcasts()
-		if len(b) == 0 {
-			log.Printf("没探测到可用网卡，只用配置里的目标（多半是 WiFi 没连上）")
-		}
-		for _, x := range b {
-			add(x)
-		}
-	}
-	return out
-}
-
-// ---- 发包 ----
-
-type targetResult struct {
-	Target string `json:"target"`
-	OK     bool   `json:"ok"`
-	Error  string `json:"error,omitempty"`
-}
-
-// broadcastConn 建一个允许发广播的 UDP 连接。
-//
-// 之前直接用 net.DialTimeout 建连，在 Linux / Android 上发到 x.x.x.255
-// 这类广播地址会被内核拒掉（EACCES），日志里全是失败但看不出原因。
-// 这里通过 Dialer.Control 在 socket 建好、还没开始发之前把
-// SO_BROADCAST 打开，255.255.255.255 和定向广播才能发出去。
-func broadcastConn(target string, port int) (net.Conn, error) {
-	d := &net.Dialer{
-		Timeout: 2 * time.Second,
-		Control: func(network, address string, c syscall.RawConn) error {
-			var serr error
-			if err := c.Control(func(fd uintptr) {
-				setBroadcast(fd)
-			}); err != nil {
-				return err
-			}
-			return serr
-		},
-	}
-	return d.Dial("udp4", net.JoinHostPort(target, fmt.Sprint(port)))
-}
-
-func blast(c Config, pkt []byte, targets []string) []targetResult {
-	res := make([]targetResult, 0, len(targets))
-	for _, t := range targets {
-		r := targetResult{Target: t}
-		var lastErr error
-		// 一个目标只建一次连接，重试时复用。
-		// 原来每轮都重新 Dial，广播场景下白白多两次握手。
-		conn, err := broadcastConn(t, c.UDPPort)
-		if err != nil {
-			r.Error = err.Error()
-			res = append(res, r)
-			continue
-		}
-		for attempt := 0; attempt < 3; attempt++ {
-			_, werr := conn.Write(pkt)
-			if werr == nil {
-				r.OK = true
-				lastErr = nil
-				break
-			}
-			lastErr = werr
-			time.Sleep(80 * time.Millisecond)
-		}
-		conn.Close()
-		if lastErr != nil {
-			r.Error = lastErr.Error()
-		}
-		res = append(res, r)
-	}
-	return res
-}
-
-// ---- HTTP ----
-
-// maskMAC 只留前三段，后面打码。
-// MAC 的前 3 字节是厂商 OUI，不敏感；后 3 字节才是这台设备的唯一标识。
-func maskMAC(mac string) string {
-	hex := strings.NewReplacer(":", "", "-", "", " ", "", ".", "").Replace(mac)
-	if len(hex) != 12 {
-		return ""
-	}
-	var b strings.Builder
-	for i := 0; i < 12; i += 2 {
-		if i > 0 {
-			b.WriteByte(':')
-		}
-		if i < 6 {
-			b.WriteString(hex[i : i+2])
-		} else {
-			b.WriteString("XX")
-		}
-	}
-	return b.String()
-}
-
-// macFingerprint 是 MAC 的短指纹，用来让 App 判断"中继配的是不是我那台电脑"，
-// 而不用把完整 MAC 暴露出去。
-// 用 FNV-1a 就够：目的不是防碰撞攻击，只是让 App 在一次扫描里做等值比较。
-func macFingerprint(mac string) string {
-	hex := strings.NewReplacer(":", "", "-", "", " ", "", ".", "").Replace(mac)
-	if len(hex) != 12 {
-		return ""
-	}
-	h := fnv.New32a()
-	h.Write([]byte(strings.ToUpper(hex)))
-	return fmt.Sprintf("%08x", h.Sum32())
-}
-
-func authorized(c Config, r *http.Request) bool {
-	if c.Token == "" {
-		return true
-	}
-	if r.URL.Query().Get("token") == c.Token {
-		return true
-	}
-	return r.Header.Get("X-Wol-Token") == c.Token
-}
-
-const pageHTML = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WOL 中继</title><style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-background:#0f1115;color:#e8eaed;font-family:-apple-system,"PingFang SC",sans-serif}
-.c{width:100%;max-width:420px;padding:32px 24px;text-align:center}
-h1{font-size:20px;margin:0 0 6px}.s{font-size:13px;color:#8b93a1;margin-bottom:28px}
-button{width:100%;padding:20px;font-size:19px;font-weight:600;color:#fff;border:0;
-border-radius:16px;background:linear-gradient(135deg,#31c48d,#1e8f66);cursor:pointer}
-button:active{transform:scale(.97)}button:disabled{opacity:.6}
-#m{margin-top:20px;font-size:14px;min-height:22px;color:#8b93a1}
-.ok{color:#31c48d}.bad{color:#f05252}
-footer{margin-top:36px;font-size:11px;color:#4b515c}</style></head><body>
-<div class="c"><h1>WOL 中继</h1><div class="s">这台设备会向家里局域网广播魔术包</div>
-<button id="b">唤 醒 电 脑</button><div id="m"></div>
-<footer>神仙道 · QQ 1974147300</footer></div>
-<script>
-var b=document.getElementById('b'),m=document.getElementById('m');
-b.onclick=async function(){
- b.disabled=true;b.textContent='发送中…';m.textContent='';m.className='';
- try{var r=await fetch('/wake',{method:'POST'});
-  var j=await r.json();
-  if(j.ok){m.textContent='已广播，电脑大概 10~20 秒起来';m.className='ok';}
-  else{m.textContent='没发出去：'+(j.error||'未知原因');m.className='bad';}
- }catch(e){m.textContent='连不上中继：'+e.message;m.className='bad';}
- b.disabled=false;b.textContent='再发一次';};
-</script></body></html>`
+// 版本号要跟 module.prop 的 version 对上。
+// App 会拿 /status 返回的 version 判断中继是不是太老，
+// 两边不一致就会出现"明明刷的是新版，App 说过期了"。
+const version = "2.2.0"
 
 func main() {
 	var (
 		cfgPath = flag.String("config", "", "配置文件路径，默认 ./config.json")
-		mac     = flag.String("mac", "", "目标网卡 MAC，覆盖配置文件")
+		macFlag = flag.String("mac", "", "目标网卡 MAC（单设备模式）")
+		nameFlg = flag.String("name", "", "设备名（配合 -mac 用）")
 		port    = flag.Int("port", 0, "魔术包 UDP 端口")
 		listen  = flag.String("listen", "", "HTTP 监听地址")
 		targets = flag.String("targets", "", "额外广播目标，逗号分隔")
 		token   = flag.String("token", "", "访问令牌，填了就要求带上")
 		repeat  = flag.Int("repeat", 0, "重复发送轮数")
 		autoBC  = flag.String("auto-broadcast", "", "true/false，是否自动算网段广播")
+		timeout = flag.Int("confirm-timeout", 0, "唤醒确认最长等待秒数")
 		showVer = flag.Bool("version", false, "打印版本后退出")
+		doctor  = flag.Bool("doctor", false, "自检：打印环境与配置诊断后退出")
 	)
 	flag.Parse()
 
@@ -363,12 +54,22 @@ func main() {
 		return
 	}
 
+	log.SetFlags(log.LstdFlags)
+
 	c, err := loadConfig(*cfgPath)
 	if err != nil {
 		log.Fatalf("读配置失败: %v", err)
 	}
-	if *mac != "" {
-		c.MAC = *mac
+
+	// 命令行 -mac 覆盖配置文件，用于临时调试。
+	// 给了就当成唯一设备，不然会出现"配置里三台 + 命令行一台"的混乱。
+	if *macFlag != "" {
+		n := *nameFlg
+		if n == "" {
+			n = "default"
+		}
+		c.Devices = []Device{{Name: n, MAC: *macFlag}}
+		c.MAC = ""
 	}
 	if *port > 0 {
 		c.UDPPort = *port
@@ -385,107 +86,150 @@ func main() {
 	if *repeat > 0 {
 		c.Repeat = *repeat
 	}
+	if *timeout > 0 {
+		c.ConfirmTimeout = *timeout
+	}
 	if *autoBC != "" {
 		v := *autoBC == "true" || *autoBC == "1"
 		c.AutoBroadcast = &v
 	}
-	if c.MAC == "" {
-		log.Fatal("还没设置 MAC。请在 config.json 里填 mac 字段，或用 -mac 传入。")
+
+	if *doctor {
+		runDoctor(c)
+		return
 	}
 
-	pkt, err := magicPacket(c.MAC)
-	if err != nil {
-		log.Fatalf("MAC 无效: %v", err)
+	if len(c.Devices) == 0 {
+		log.Fatal("还没有可唤醒的设备。请在 config.json 的 devices 里至少填一台，" +
+			"格式见 config.example.json。")
 	}
-	targets2 := resolveTargets(c)
 
-	started := time.Now()
-	var mu sync.Mutex
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost && r.Method != http.MethodGet {
-			http.Error(w, "方法不支持", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authorized(c, r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"ok":false,"error":"token 不对"}`)
-			return
-		}
-		all := []targetResult{}
-		for i := 0; i < c.Repeat; i++ {
-			all = append(all, blast(c, pkt, targets2)...)
-			if i < c.Repeat-1 {
-				time.Sleep(time.Duration(c.IntervalMS) * time.Millisecond)
-			}
-		}
-		ok, okCount := false, 0
-		for _, x := range all {
-			if x.OK {
-				ok = true
-				okCount++
-			}
-		}
-		mu.Lock()
-		log.Printf("唤醒请求 %s -> %d/%d 个目标成功", r.RemoteAddr, okCount, len(all))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(map[string]any{
-			"ok": ok, "sent": okCount, "total": len(all),
-			"mac": c.MAC, "detail": all,
-		})
-	})
-
-	// /status 故意不要求鉴权 —— App 自检就是靠它扫网段找中继的，
-	// 一上来就要 token 的话扫不出任何东西。
-	// 但完整 MAC 是设备指纹，不能白给：默认只返回前 3 字节 + 指纹，
-	// 带对了 token 才返回完整值。
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// 只有"确实配了 token 而且带对了"才给完整 MAC。
-		// 没配 token 时 authorized() 恒为 true，那种情况下同样要打码 ——
-		// 否则默认配置一装上，同一网段任何人都能读到完整 MAC。
-		full := c.Token != "" && authorized(c, r)
-		macField := maskMAC(c.MAC)
-		if full {
-			macField = c.MAC
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"ok": true, "version": version, "mac": macField,
-			"macFp": macFingerprint(c.MAC), "macFull": full,
-			"udpPort": c.UDPPort, "targets": targets2,
-			"uptime": time.Since(started).Round(time.Second).String(),
-			"auth":   c.Token != "",
-		})
-	})
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, pageHTML)
-	})
-
-	log.Printf("wolrelay %s 启动于 %s，MAC=%s，UDP=%d，目标=%s",
-		version, c.Listen, c.MAC, c.UDPPort, strings.Join(targets2, ","))
+	// 启动横幅只打一次。之前每个请求都打一行"网卡 X -> 广播地址 Y"，
+	// 日志几小时就被刷满了，真正出问题的时候翻不到有用信息。
+	log.Printf("wolrelay %s 启动于 %s", version, c.Listen)
+	log.Printf("UDP 端口 %d，重复 %d 轮，确认超时 %d 秒，端口 %v",
+		c.UDPPort, c.Repeat, c.ConfirmTimeout, c.ConfirmPorts)
+	for _, d := range c.Devices {
+		log.Printf("设备 %-12s MAC=%s%s", d.Name, maskMAC(d.MAC), hostNote(d))
+	}
+	for _, t := range resolveTargets(c) {
+		log.Printf("广播目标 %s", t)
+	}
+	if c.Token == "" {
+		log.Printf("注意：没设 token，同一网段任何人都能调这个接口（只影响 /wake 和 /confirm）")
+	}
 
 	srv := &http.Server{
 		Addr:              c.Listen,
-		Handler:           mux,
+		Handler:           routes(c),
 		ReadHeaderTimeout: 5 * time.Second,
+		// 不设 WriteTimeout：/wake?wait=1 要挂到确认超时，
+		// 设了 WriteTimeout 会先把连接掐掉。
+		IdleTimeout: 60 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// 版本号要跟 module.prop 的 version 对上。
-// App 会拿 /status 返回的 version 判断中继是不是太老，
-// 两边不一致就会出现"明明刷的是新版，App 说过期了"。
-const version = "2.1.2"
+func hostNote(d Device) string {
+	if d.Host == "" {
+		return ""
+	}
+	return "  host=" + d.Host
+}
+
+// runDoctor 是中继侧的 -doctor：把"为什么唤不醒"能查的都查一遍。
+//
+// 放在二进制里而不是单独的脚本，是因为路由器上的用户不会去翻 shell 脚本，
+// 但 `wolrelay -doctor` 他有可能会试一次。
+func runDoctor(c Config) {
+	fmt.Printf("wolrelay %s 自检\n\n", version)
+
+	// 1. 配置
+	fmt.Printf("[1] 配置\n")
+	fmt.Printf("    监听      %s\n", c.Listen)
+	fmt.Printf("    UDP 端口  %d\n", c.UDPPort)
+	fmt.Printf("    设备数    %d\n", len(c.Devices))
+	for _, d := range c.Devices {
+		ok := "OK"
+		if !macValid(d.MAC) && d.MAC != "" {
+			ok = "MAC 格式不对"
+		}
+		if d.MAC == "" && d.Host == "" {
+			ok = "mac 和 host 都空着"
+		}
+		fmt.Printf("    %-12s %s  %s\n", d.Name, maskMAC(d.MAC), ok)
+	}
+
+	// 2. 网卡
+	fmt.Printf("\n[2] 网卡与广播目标\n")
+	nets := enumerateNets()
+	if len(nets) == 0 {
+		fmt.Printf("    !! 没有可用的物理网卡。Wi-Fi 没连上，或者只有隧道网卡。\n")
+	} else {
+		for _, n := range nets {
+			fmt.Printf("    %-10s %-15s -> %s\n", n.Iface, n.IP.String(), n.Broadcast)
+		}
+	}
+
+	// 3. ARP 表
+	fmt.Printf("\n[3] ARP 表\n")
+	arp := readARPTable()
+	if arp == nil {
+		fmt.Printf("    读不到 /proc/net/arp（容器环境常见），唤醒确认会退回扫网段\n")
+	} else {
+		fmt.Printf("    共 %d 条\n", len(arp))
+		for _, d := range c.Devices {
+			ips := arpLookup(d.MAC)
+			if len(ips) == 0 {
+				fmt.Printf("    %-12s 现在不在 ARP 表里（关机状态是正常的）\n", d.Name)
+			} else {
+				fmt.Printf("    %-12s 现在就在线：%s\n", d.Name, strings.Join(ips, ", "))
+			}
+		}
+	}
+
+	// 4. 实发一次
+	fmt.Printf("\n[4] 试发一个包\n")
+	// 没有设备时不能直接取 c.Devices[0] —— 会 panic。
+	// 而这个命令的用处恰好是"配置有问题时诊断配置"，
+	// 在最该它工作的时候崩掉是最糟的。
+	if len(c.Devices) == 0 {
+		fmt.Printf("    跳过：没有可试发的设备\n")
+	} else {
+		d := c.Devices[0]
+		pkt, err := magicPacket(d.MAC)
+		if err != nil {
+			fmt.Printf("    !! %v\n", err)
+		} else {
+			all, n := sendMagic(c, pkt)
+			fmt.Printf("    %s: %d/%d 个目标成功\n", d.Name, n, len(all))
+			for _, r := range all {
+				st := "OK"
+				if !r.OK {
+					st = "失败 " + r.Error
+				}
+				fmt.Printf("      %-18s %s\n", r.Target, st)
+			}
+			if n == 0 {
+				fmt.Printf("    !! 一个都没发出去。检查网卡是否连上局域网，\n"+
+					"       以及是否有防火墙拦 UDP %d。\n", c.UDPPort)
+			}
+		}
+	}
+
+	fmt.Printf("\n[5] 结论\n")
+	if n := len(c.Devices); n == 0 {
+		fmt.Printf("    配置里没有设备，先填 config.json\n")
+	} else if len(nets) == 0 {
+		fmt.Printf("    网卡没就绪，先联网\n")
+	} else {
+		fmt.Printf("    环境看起来正常。如果还是唤不醒，问题在目标机器那头：\n")
+		fmt.Printf("    · BIOS 里关闭 ErP/EuP，开启 Wake on LAN\n")
+		fmt.Printf("    · Windows 执行 powercfg /h off 关掉快速启动\n")
+		fmt.Printf("    · 必须是网线连接，Wi-Fi 网卡断电后唤不醒\n")
+	}
+
+	_ = os.Stdout
+}
