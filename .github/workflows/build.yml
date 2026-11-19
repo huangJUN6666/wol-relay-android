@@ -6,8 +6,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 版本号校验放最前面，而且是最轻的一步（只跑 bash，不装任何东西）。
+  # v2.1.0 那次就是五处版本号漏改一处，App 误判中继过旧、
+  # 让用户去升级一个根本不用升级的东西。这种错跑十几分钟 CI 才发现太亏，
+  # 所以让 relay / apk 都 dependsOn 它，不一致就直接全挂。
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 五处版本号是否一致
+        run: bash scripts/check-version.sh
+
   # 中继是纯 Go 静态编译，任何机器上都能出结果，适合先跑这个
   relay:
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +41,7 @@ jobs:
 
   # APK 需要 SDK，放在单独 job 里，失败了不影响模块产物
   apk:
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +104,7 @@ jobs:
           path: dist/*.apk
 
   release:
-    needs: [relay, apk]
+    needs: [guard, relay, apk]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

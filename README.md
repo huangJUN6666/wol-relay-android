@@ -7,10 +7,16 @@
 作者：**神仙道**　QQ：**1974147300**
 
 <p align="center">
-  <img src="docs/screenshots/app-main.jpg" width="300" alt="App 主界面：方式一直连公网、方式二备用机中继、目标设备 MAC">
+  <img src="docs/screenshots/app-main.jpg" width="300" alt="WOL Relay App 主界面：方式一直连公网、方式二备用机中继、目标设备 MAC">
 </p>
 
 <p align="center"><sub>配套 App 主界面。两种方式并行，哪条通走哪条；中继地址可以填多个，在家走局域网、在外走 Tailscale。</sub></p>
+
+<p align="center">
+  <a href="https://github.com/huangJUN6666/wol-relay-android/releases/latest"><img src="https://img.shields.io/github/v/release/huangJUN6666/wol-relay-android?color=red" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/root-Magisk%20%2F%20KernelSU%20%2F%20APatch-red" alt="需要 root">
+  <img src="https://img.shields.io/badge/%E4%B8%8D%E9%9C%80%E5%85%AC%E7%BD%91IP-%E6%97%A0%E9%9C%80%E7%AB%AF%E5%8F%A3%E6%98%A0%E5%B0%84-red" alt="不需要公网 IP">
+</p>
 
 ---
 
