@@ -1,5 +1,51 @@
 # 更新记录
 
+## v2.1.2
+
+这一版没有改唤醒逻辑，修的是「发出去之后」和「别人来用」这两类问题。
+
+**中继**
+
+- **`/status` 不再无条件吐完整 MAC**。原来任何能访问到 8080 的人请求 `/status`
+  都会拿到完整网卡 MAC，等于把家里电脑的设备指纹公开在同一网段上。
+  现在默认只返回 `AA:BB:CC:XX:XX:XX`（前三段是厂商 OUI，不敏感），
+  同时给一个 `macFp` 指纹；只有配置了 token 并且带对 token，才返回完整值。
+  App 的自检改用指纹比对，所以「中继配的 MAC 跟 App 填的对不上」这个提示照旧能用。
+
+**App**
+
+- 跟着上面的改动走：新增 `macFp` / `macFull` 两个字段的解析，
+  MAC 比对改成三级回退（完整 MAC → 指纹 → 前三段 OUI），
+  避免因为中继打码而误报「MAC 不一致」。
+  FNV-1a 的实现跟 `relay/main.go` 严格一致，两边算出来是同一个值。
+
+**构建 / 发布**
+
+- **APK 产物名改成纯 ASCII**：`远程开机.apk` → `WOL-Relay-App-v2.1.1.apk`。
+  中文名上传到 GitHub Release 会被换成 `default.apk` 或被过滤成 `-v2.1.1.apk`，
+  上一版只能传完再手工 PATCH 改名。现在从构建脚本产出就是 ASCII，一次到位。
+  `publish-release.py` 里也加了拦截：非 ASCII 的文件名直接报错，不再上传。
+- 加上 `.gitattributes` 强制 `*.sh` / `update-binary` 用 LF。
+  这两个文件一旦被 Windows 存成 CRLF，刷进 Magisk 会报
+  `not found` 或 `syntax error: unexpected end of file`，且极难定位。
+- 新增 `scripts/check-version.sh`：一次检查 `module.prop`、`relay/main.go`、
+  `AndroidManifest.xml`、README、CHANGELOG 五处版本号是否一致。
+  v2.1.0 那次「中继 /status 报旧版本、App 误判要升级」就是漏改其中一处导致的。
+- CI 去掉 `android-actions/setup-android@v3`。这步会去下载 cmdline-tools，
+  超时或 429 时直接把 apk job 拖挂，连带 release job 被 skip
+  （v2.1.1 的 tag 构建就是这么失败的：relay job 成功，apk job 在第 4 步失败，
+  release 整个跳过，所以 Release 里的产物是本地手工传的）。
+  ubuntu-latest runner 本来就带 SDK，直接用它。
+- CI 写 `build.env` 改用逐行 echo。原来的 heredoc 会把 YAML 缩进原样写进文件，
+  `build.env` 每行带前导空格，脚本 `source` 时报 `command not found`。
+
+**文案**
+
+- 删掉 Release 说明里「抓包能直连网卡驱动层发原始以太网帧」这句。
+  代码里没有 `AF_PACKET`、没有 raw socket，就是标准 UDP 魔术包，
+  写成那样会被人当场指出来。改成如实描述 root 到底带来什么：
+  进程活得久、开机就跑、不受厂商省电策略干扰。
+
 ## v2.1.1
 
 这一版全是在真机上跑出来才发现的坑，都属于「日志说一切正常、但就是唤不醒」那一类。

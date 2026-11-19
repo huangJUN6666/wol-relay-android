@@ -155,7 +155,17 @@ def main():
     if msg:
         msg = git("log", "-1", "--pretty=%B")
     else:
-        msg = "WOL Relay v2.1.1"
+        # 没有 git 历史时（比如在别的机器上首次上传）用版本号兜底，
+        # 别把版本号写死在代码里，module.prop 改了这里还得再改一次。
+        try:
+            _ver = ""
+            for _line in open(os.path.join(HERE, "module", "module.prop"), encoding="utf-8"):
+                if _line.startswith("version="):
+                    _ver = _line.split("=", 1)[1].strip()
+                    break
+        except Exception:
+            _ver = ""
+        msg = "WOL Relay %s" % (_ver or "update")
 
     body = {"message": msg, "tree": new_tree["sha"], "parents": parents}
     if not parents:

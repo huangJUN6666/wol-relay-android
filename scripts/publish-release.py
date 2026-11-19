@@ -9,7 +9,7 @@
 #  用法：
 #    export GH_TOKEN=ghp_xxxx
 #    python scripts/publish-release.py
-#    python scripts/publish-release.py v2.1.1
+#    python scripts/publish-release.py v2.1.2
 # ============================================================
 import json
 import mimetypes
@@ -58,7 +58,7 @@ def req(method, path, tok, body=None, ok=(200, 201, 204), raw=False, ctype=None)
 
 def read_version():
     p = os.path.join(HERE, "module", "module.prop")
-    v = "v2.1.1"
+    v = "v2.1.2"
     for line in open(p, encoding="utf-8"):
         if line.startswith("version="):
             v = line.split("=", 1)[1].strip()
@@ -71,22 +71,31 @@ def body_text(tag):
 ### 【Root 版 / Magisk 模块】—— 主推方案
 `wol-relay-%s.zip`
 
-刷入方式：Magisk / KernelSU 里「从本地安装」选这个 zip，重启生效。
-带 root 的意义：中继跑在系统里，休眠也能被叫醒，不依赖电脑侧任何配置，
-抓包能直连网卡驱动层发原始以太网帧，成功率比普通 App 高。
+刷入方式：Magisk / KernelSU / APatch 里「从本地安装」选这个 zip，重启生效。
+
+带 root 的实际意义（不吹，就这三条）：
+1. **进程活得久**。模块由 `magiskd` 以 root 身份拉起，不归 App 沙箱管，
+   厂商省电策略清不到它；进程退出会被 `service.sh` 重新拉起，连续崩按 6→12→…→300 秒退避。
+2. **开机就跑**。`service.sh` 在 `post-fs-data` 之后执行，不用等用户解锁、不用先进 App。
+3. **首发包就能发出去**。root 身份下打开 `SO_BROADCAST` 不受厂商 SELinux 策略干扰。
+
+技术实现是标准 UDP 魔术包（102 字节，6×FF + 16 次 MAC），走 `255.255.255.255`
+或各网卡的定向广播地址，**没有用 raw socket、不做抓包**。这一点写清楚，
+免得有人以为是底层注入。
 
 装完必做：
 1. 编辑 `/data/adb/wol-relay/config.json`，把 `mac` 改成你要唤醒的网卡
 2. 重启手机
 3. 跑自检：`su -c 'sh /data/adb/modules/wol-relay/doctor.sh'`
 
-### 【配套 App】远程开机.apk
-不是必须装，装了方便：一键自检、扫局域网找中继、失败时告诉你卡在哪一层。
+### 【配套 App】WOL-Relay-App-<版本>.apk
+不是必须装。装了方便：一键自检、扫局域网找中继、失败时直接告诉你卡在哪一层。
+不装也行，浏览器打开中继地址就是同一个按钮。
 
 ### 支持设备
-- 手机端：arm64（主流）/ 32 位 arm（包内已带对应二进制，装的时候自动挑）
-- 电脑端：任何支持 Wake-on-LAN 的有线网卡
-- 路由器：能跑 Docker 或 OpenWrt 即可
+- 手机端（中继）：arm64 / armeabi-v7a，装的时候按机型自动挑，包内两个二进制都带了
+- 电脑端：任何支持 Wake-on-LAN 的**有线**网卡（WiFi 网卡关机后断电，唤不醒）
+- 路由器：理论上能跑任意静态 Go 二进制，但**没实测**，别当官方支持
 
 详细步骤见仓库 `docs/` 目录，六篇，从电脑设置到排错都有。
 
@@ -131,10 +140,17 @@ def main():
     dist = os.path.join(HERE, "dist")
     wanted = []
     for f in sorted(os.listdir(dist)) if os.path.isdir(dist) else []:
-        if f.endswith((".zip", ".apk")):
+        # .idsig 是 apksigner 生成的签名附属文件，装应用用不上，别传到 Release 里
+        if f.endswith((".zip", ".apk")) and not f.endswith(".idsig"):
             wanted.append(f)
     if not wanted:
         sys.exit("dist/ 里没有 zip 或 apk，先跑 build 脚本")
+
+    # 只传纯 ASCII 文件名。中文名传上去会被 GitHub 换成 default.apk 或被过滤掉，
+    # 与其传完再改名，不如在这里直接拦下来。
+    bad = [f for f in wanted if not f.isascii()]
+    if bad:
+        sys.exit("这些产物名不是纯 ASCII，先改名再传：\n  " + "\n  ".join(bad))
 
     print("[3/3] 上传 %d 个产物" % len(wanted))
     for f in wanted:

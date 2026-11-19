@@ -30,7 +30,17 @@ fi
 : "${JDK:?build.env 里要设置 JDK（JDK 11 或 17 的根目录）}"
 : "${KEYSTORE:=$HERE/android/app/keystore/wol.jks}"
 : "${KEY_ALIAS:=wol}"
-: "${OUT_APK:=$HERE/dist/远程开机.apk}"
+
+# 版本号只有一个来源：module.prop。不在这里再写一份，
+# 否则模块和 App 迟早对不上（v2.1.0 时就吃过这个亏）。
+# 保留 v 前缀，跟模块 zip 的 wol-relay-vX.Y.Z.zip 保持同一套命名。
+VER=$(grep '^version=' "$HERE/module/module.prop" | cut -d= -f2 | tr -d ' \r')
+case "$VER" in v*) ;; *) VER="v$VER" ;; esac
+
+# 产物名必须是纯 ASCII。
+# 中文文件名传到 GitHub Release 会被替换成 default.apk，
+# 或者被过滤成 `-v2.1.1.apk`，下载的人根本不知道自己拿到的是什么。
+: "${OUT_APK:=$HERE/dist/WOL-Relay-App-$VER.apk}"
 
 # build-tools 和 platforms 的版本号不写死 —— 每台机器装的版本都不一样。
 # 没指定就挑目录里最大的那个（版本号按数字排序，不是按字符串）。

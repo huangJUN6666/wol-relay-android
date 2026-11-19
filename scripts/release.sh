@@ -79,4 +79,4 @@ echo "  https://github.com/$(git remote get-url "$REMOTE" | sed -E 's#.*[:/]([^/
 echo ""
 echo "约两分钟后回来看："
 echo "  - wol-relay-$TAG.zip        Magisk 模块（root 方案）"
-echo "  - 远程开机.apk              客户端 App"
+echo "  - WOL-Relay-App-*.apk      客户端 App"

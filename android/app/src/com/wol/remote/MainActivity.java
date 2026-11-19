@@ -332,7 +332,7 @@ public class MainActivity extends Activity {
             return "结论：中继通了，但你没填 MAC\n把电脑网卡的 MAC 填上，就能发了。";
         }
         for (Probe p : alive) {
-            if (p.mac != null && p.mac.length() > 0 && !sameMac(p.mac, appMac)) {
+            if (!macMatches(p, appMac)) {
                 return "结论：中继里的 MAC 跟这台电脑对不上\n"
                         + "中继是 " + maskMac(p.mac) + "，App 填的是 " + maskMac(appMac) + "。\n"
                         + "改备用机上的 config.json，或者把 App 里的 MAC 改对。";
@@ -350,7 +350,7 @@ public class MainActivity extends Activity {
     private int verdictColor(List<Probe> found, String appMac, String ip) {
         for (Probe p : found) if (p.reach) {
             if (appMac.length() == 0) return C_AMBER;
-            if (p.mac != null && p.mac.length() > 0 && !sameMac(p.mac, appMac)) return C_AMBER;
+            if (!macMatches(p, appMac)) return C_AMBER;
             if (p.auth && etToken.getText().toString().trim().length() == 0) return C_AMBER;
             return C_GREEN;
         }
@@ -370,7 +370,7 @@ public class MainActivity extends Activity {
         if (p.mac != null && p.mac.length() > 0) {
             s.append("    MAC   ").append(maskMac(p.mac));
             if (appMac.length() > 0) {
-                s.append(sameMac(p.mac, appMac) ? "  与 App 一致" : "  与 App 不一致");
+                s.append(macMatches(p, appMac) ? "  与 App 一致" : "  与 App 不一致");
             }
             s.append("\n");
         }
@@ -499,6 +499,8 @@ public class MainActivity extends Activity {
             p.reach = true;
             p.version = j.optString("version", null);
             p.mac = j.optString("mac", null);
+            p.macFp = j.optString("macFp", null);
+            p.macFull = j.optBoolean("macFull", false);
             p.auth = j.optBoolean("auth", false);
             Object t = j.opt("targets");
             if (t != null) {
@@ -850,6 +852,10 @@ public class MainActivity extends Activity {
         boolean reach;
         String version;
         String mac;
+        /** 中继返回的 MAC 指纹。中继对未鉴权的请求只给打码 MAC，靠它才能比对。 */
+        String macFp;
+        /** 中继是否返回了完整 MAC（只有带对 token 才是 true）。 */
+        boolean macFull;
         boolean auth;
         String targets;
         String err;
@@ -936,6 +942,50 @@ public class MainActivity extends Activity {
 
     private static boolean sameMac(String a, String b) {
         return normMac(a).equals(normMac(b));
+    }
+
+    /**
+     * 判断中继配的 MAC 跟 App 里填的是不是同一个。
+     *
+     * 中继对未鉴权请求只返回打码 MAC（AA:BB:CC:XX:XX:XX），
+     * 直接字符串比对必然不等 —— 那会让 App 每次都误报"MAC 对不上"。
+     * 所以按优先级取能用的证据：
+     *   1. 有完整 MAC        → 直接比
+     *   2. 只有打码 MAC + 指纹 → 比指纹（中继用同一套 FNV-1a 算的）
+     *   3. 只有打码 MAC       → 只比前三段（厂商 OUI），能排除大部分配错
+     *   4. 什么都没有         → 不判断，当成一致，别误报
+     */
+    private static boolean macMatches(Probe p, String appMac) {
+        if (appMac == null || appMac.length() == 0) return true;
+        String normApp = normMac(appMac);
+        if (normApp.length() != 12) return true;
+
+        if (p.macFull && p.mac != null && p.mac.length() > 0) {
+            return sameMac(p.mac, appMac);
+        }
+        if (p.macFp != null && p.macFp.length() == 8) {
+            return p.macFp.equalsIgnoreCase(macFp(appMac));
+        }
+        String relay = normMac(p.mac);
+        if (relay.length() == 12 && relay.contains("XX")) {
+            return relay.substring(0, 6).equals(normApp.substring(0, 6));
+        }
+        if (relay.length() == 12) {
+            return relay.equals(normApp);
+        }
+        return true;
+    }
+
+    /** 跟中继 relay/main.go 里 macFingerprint() 保持一致：FNV-1a 32 位，大写十六进制。 */
+    private static String macFp(String mac) {
+        String n = normMac(mac);
+        if (n.length() != 12) return "";
+        int h = 0x811c9dc5;
+        for (int i = 0; i < n.length(); i++) {
+            h ^= n.charAt(i);
+            h *= 0x01000193;
+        }
+        return String.format("%08x", h);
     }
 
     /** 报告里不打印完整 MAC，前六位够认人了。 */

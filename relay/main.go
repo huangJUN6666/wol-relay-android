@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net"
 	"net/http"
@@ -270,6 +271,40 @@ func blast(c Config, pkt []byte, targets []string) []targetResult {
 
 // ---- HTTP ----
 
+// maskMAC 只留前三段，后面打码。
+// MAC 的前 3 字节是厂商 OUI，不敏感；后 3 字节才是这台设备的唯一标识。
+func maskMAC(mac string) string {
+	hex := strings.NewReplacer(":", "", "-", "", " ", "", ".", "").Replace(mac)
+	if len(hex) != 12 {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < 12; i += 2 {
+		if i > 0 {
+			b.WriteByte(':')
+		}
+		if i < 6 {
+			b.WriteString(hex[i : i+2])
+		} else {
+			b.WriteString("XX")
+		}
+	}
+	return b.String()
+}
+
+// macFingerprint 是 MAC 的短指纹，用来让 App 判断"中继配的是不是我那台电脑"，
+// 而不用把完整 MAC 暴露出去。
+// 用 FNV-1a 就够：目的不是防碰撞攻击，只是让 App 在一次扫描里做等值比较。
+func macFingerprint(mac string) string {
+	hex := strings.NewReplacer(":", "", "-", "", " ", "", ".", "").Replace(mac)
+	if len(hex) != 12 {
+		return ""
+	}
+	h := fnv.New32a()
+	h.Write([]byte(strings.ToUpper(hex)))
+	return fmt.Sprintf("%08x", h.Sum32())
+}
+
 func authorized(c Config, r *http.Request) bool {
 	if c.Token == "" {
 		return true
@@ -405,10 +440,23 @@ func main() {
 		})
 	})
 
+	// /status 故意不要求鉴权 —— App 自检就是靠它扫网段找中继的，
+	// 一上来就要 token 的话扫不出任何东西。
+	// 但完整 MAC 是设备指纹，不能白给：默认只返回前 3 字节 + 指纹，
+	// 带对了 token 才返回完整值。
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// 只有"确实配了 token 而且带对了"才给完整 MAC。
+		// 没配 token 时 authorized() 恒为 true，那种情况下同样要打码 ——
+		// 否则默认配置一装上，同一网段任何人都能读到完整 MAC。
+		full := c.Token != "" && authorized(c, r)
+		macField := maskMAC(c.MAC)
+		if full {
+			macField = c.MAC
+		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok": true, "version": version, "mac": c.MAC,
+			"ok": true, "version": version, "mac": macField,
+			"macFp": macFingerprint(c.MAC), "macFull": full,
 			"udpPort": c.UDPPort, "targets": targets2,
 			"uptime": time.Since(started).Round(time.Second).String(),
 			"auth":   c.Token != "",
@@ -440,4 +488,4 @@ func main() {
 // 版本号要跟 module.prop 的 version 对上。
 // App 会拿 /status 返回的 version 判断中继是不是太老，
 // 两边不一致就会出现"明明刷的是新版，App 说过期了"。
-const version = "2.1.1"
+const version = "2.1.2"

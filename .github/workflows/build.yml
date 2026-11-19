@@ -37,7 +37,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest 自带 Android SDK，不必再装 setup-android 这个 action。
+      # 原来那步会去下载 cmdline-tools，经常超时或 429，直接把整个 job 拖挂，
+      # 连带 release job 被 skip。
+      - name: 确认 Android SDK
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "SDK=$SDK"
+          ls "$SDK/build-tools" "$SDK/platforms"
 
       # 签名密钥不放在仓库里，用 Secret 存一份 base64 传进来。
       # 如果没有配 Secret，就临时生成一把 —— 能出包，但每次签名都不同，
@@ -60,13 +67,17 @@ jobs:
         run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           BT=$(ls "$SDK_ROOT/build-tools" | sort -V | tail -1)
-          cat > build.env <<EOF
-          SDK=$SDK_ROOT
-          BUILD_TOOLS_VERSION=$BT
-          JDK=$JAVA_HOME
-          KEYSTORE_PASS=${KS_PASS:-ci-temporary-pass}
-          KEY_ALIAS=wol
-          EOF
+          # 用逐行 echo，不用 heredoc：YAML 里的缩进会被原样写进文件，
+          # build.env 每行带前导空格的话，脚本 source 时会当成命令执行并报
+          # "SDK=...: command not found"。
+          : > build.env
+          echo "SDK=$SDK_ROOT"                >> build.env
+          echo "BUILD_TOOLS_VERSION=$BT"      >> build.env
+          echo "JDK=$JAVA_HOME"               >> build.env
+          echo "KEYSTORE_PASS=${KS_PASS:-ci-temporary-pass}" >> build.env
+          echo "KEY_ALIAS=wol"                >> build.env
+          echo "--- build.env ---"
+          cat build.env
 
       - name: 编译 APK
         run: |
@@ -102,9 +113,11 @@ jobs:
             | 文件 | 方案 | 需要 root | 说明 |
             |---|---|---|---|
             | `wol-relay-${{ github.ref_name }}.zip` | **Root 版** | 是 | Magisk / KernelSU / APatch 模块，装到闲置安卓机上当中继 |
-            | `远程开机.apk` | 客户端 | 否 | 装在你自己手机上，用来触发唤醒。**不装也行**，浏览器直接开中继地址同样能用 |
+            | `WOL-Relay-App-*.apk` | 客户端 | 否 | 装在你自己手机上，用来触发唤醒。**不装也行**，浏览器直接开中继地址同样能用 |
 
             **Root 版**是主力方案：模块由 `magiskd` 以 root 身份常驻，不受系统省电策略影响，进程挂了会自动拉起。
+
+            技术上是标准 UDP 魔术包（102 字节），**没有用 raw socket、不做抓包**——写清楚免得误会。
 
             没有 root 的机器看 [docs/05-没有root怎么办.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/05-没有root怎么办.md)，里面有 Termux 方案，但要接受它会被系统清后台。
 

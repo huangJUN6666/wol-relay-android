@@ -6,6 +6,12 @@
 
 作者：**神仙道**　QQ：**1974147300**
 
+<p align="center">
+  <img src="docs/screenshots/app-main.jpg" width="300" alt="App 主界面：方式一直连公网、方式二备用机中继、目标设备 MAC">
+</p>
+
+<p align="center"><sub>配套 App 主界面。两种方式并行，哪条通走哪条；中继地址可以填多个，在家走局域网、在外走 Tailscale。</sub></p>
+
 ---
 
 ## 这东西解决什么问题
@@ -55,7 +61,7 @@ GitHub 上同类项目基本都是用 Termux 跑个脚本。能跑，但撑不�
 **软件：**
 
 - 备用机：Magisk / KernelSU / APatch 任一
-- 手机端 App：本仓库 Releases 里的 `远程开机.apk`
+- 手机端 App：本仓库 Releases 里的 `WOL-Relay-App-v2.1.2.apk`
 - 外网访问（可选）：Tailscale
 
 ## 整体步骤
@@ -105,10 +111,10 @@ flowchart TD
 ```bash
 # 依赖：go 1.21+、python3（打 zip 用）
 bash scripts/build-module.sh
-# 产物：dist/wol-relay-v2.1.1.zip
+# 产物：dist/wol-relay-v2.1.2.zip
 
 # 推到手机并刷入
-adb push dist/wol-relay-v2.1.1.zip /sdcard/Download/
+adb push dist/wol-relay-v2.1.2.zip /sdcard/Download/
 # 手机上打开 Magisk → 模块 → 从本地安装 → 选这个 zip
 
 # 改配置
@@ -125,7 +131,7 @@ App 那边：
 ```bash
 cp build.env.example build.env   # 填本机 SDK / JDK 路径
 bash scripts/build-apk.sh
-# 产物：dist/远程开机.apk
+# 产物：dist/WOL-Relay-App-v2.1.2.apk
 ```
 
 ### 想自己发一份到 GitHub
@@ -214,11 +220,12 @@ wol-relay-android/
 ├── scripts/
 │   ├── build-module.sh   交叉编译 + 打模块 zip
 │   ├── build-apk.sh      手工打包 APK（不用 Gradle）
+│   ├── check-version.sh  检查五处版本号是否一致，提交前跑
 │   ├── push-github.sh    走 git push 一键上传（需要 gh 登录）
 │   ├── push-via-api.py   走 REST API 上传（只需 PAT，绕开主站）
 │   ├── publish-release.py 打 tag、发 Release、传产物
 │   └── release.sh        本地打 tag 版
-├── docs/                六篇文档
+├── docs/                六篇文档 + screenshots/（界面截图）
 └── .github/workflows/   CI 构建与 Release
 ```
 
