@@ -165,19 +165,38 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 不要用 merge-multiple: true。
+      # 它会把每个 artifact 的内容平铺进 dist/ 根目录，native/ 这一层被抹掉，
+      # 于是下面 files: 里写的 dist/native/... 全部匹配不到。
+      # softprops/action-gh-release 对匹配不到的通配符不报错，只是悄悄不上传 ——
+      # v2.2.0 首发就是这样：Release 里只有 zip 和 apk，
+      # 七个裸二进制一个都没进去，而 CI 显示四个 job 全绿。
+      # 现在按 artifact 名分目录：dist/module、dist/native、dist/apk。
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          merge-multiple: true
+
+      # 少传一个文件就给个红叉，别等发完才发现下载页少东西
+      - name: 确认产物齐全
+        run: |
+          set -e
+          echo "=== dist 树 ==="
+          find dist -type f -printf '%10s  %p\n' | sort -k2
+          n=$(ls dist/native/wolrelay-linux-* 2>/dev/null | wc -l)
+          echo "裸二进制：$n 个"
+          [ "$n" -eq 7 ] || { echo "::error::应该有 7 个裸二进制，实际 $n 个"; exit 1; }
+          test -f dist/native/SHA256SUMS || { echo "::error::缺 SHA256SUMS"; exit 1; }
+          ls dist/module/*.zip >/dev/null || { echo "::error::缺模块 zip"; exit 1; }
+          ls dist/apk/*.apk  >/dev/null || { echo "::error::缺 APK"; exit 1; }
 
       - uses: softprops/action-gh-release@v2
         with:
           # 产物名字里直接带方案类型，下载的人一眼知道自己在拿哪个
           files: |
-            dist/wol-relay-*.zip
+            dist/module/*.zip
             dist/native/wolrelay-linux-*
             dist/native/SHA256SUMS
-            dist/*.apk
+            dist/apk/*.apk
           body: |
             ## 下载哪个
 
