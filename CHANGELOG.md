@@ -87,11 +87,15 @@ curl -fsSL https://raw.githubusercontent.com/huangJUN6666/wol-relay-android/main
 | `net.go` | 每次 `/status` 都枚举一遍所有网卡 | App 每秒轮询一次，在树莓派/路由器上是白费的系统调用。加 2 秒 TTL 缓存，换 WiFi 场景最多晚 2 秒跟上 |
 | `confirm.go` + App + 网页 | **归因靠中文文案做关键词匹配** | 两条归因文案里都含「网卡」二字，`note.contains("网卡")` 把「网卡 3.2 秒时上电了，但系统端口一直没起来」（**电脑侧**）判成了网络侧，反过来建议用户去查网线。网页更糟：超时一律甩给「快速启动没关 / BIOS 关了网络唤醒」，ARP 从没出现时也不改口。现在中继给结构化 `cause`（`no_arp` / `arp_only` / `no_mac`），两端按字段分支，不再看文案 |
 
+| CI `build.yml` | `download-artifact` 用了 `merge-multiple: true` | 每个 artifact 被平铺进 `dist/` 根目录，`native/` 这层被抹掉，`files:` 里的 `dist/native/...` 全部匹配不到。**而 `action-gh-release` 对没匹配到的通配符不报错，只是静默不上传** —— 首发那次四个 job 全绿、下载页只有 zip 和 apk，七个裸二进制一个都没进去。改成按 artifact 名分目录，并在上传前显式点数，少于 7 个直接红叉 |
+
 ### 五、顺手清的
 
 - 删掉 `resolveTargetsCached`（定义了从未被调用）
 - `config.example.json` 更新成多设备格式（原来还是单 mac，新用户照抄会困惑）
 - `-doctor` 的结论更明确：零设备时说「先填 config.json」而不是崩
+- Release job 在上传前先 `find dist` 打印完整产物树，并校验数量与关键文件；
+  以前是「CI 绿了就当发好了」，产物少了要等用户来报才知道
 
 ---
 
