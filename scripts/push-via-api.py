@@ -32,6 +32,11 @@ API = "https://api.github.com"
 DEFAULT_REPO = "wol-relay-android"
 DEFAULT_BRANCH = "main"
 
+# 脚本可能从任意目录被调用（比如 python scripts/push-via-api.py），
+# 兜底分支里要读 module/module.prop，就必须按脚本自身位置算，不能用 cwd。
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
 # 这个项目定位是 root 版块。GitHub 上没有"版块"这个概念，靠的是 topics：
 # 别人逛 github.com/topics/magisk-module、/kernel-su、/wake-on-lan 才翻得到。
 TOPICS = [
@@ -159,7 +164,7 @@ def main():
         # 别把版本号写死在代码里，module.prop 改了这里还得再改一次。
         try:
             _ver = ""
-            for _line in open(os.path.join(HERE, "module", "module.prop"), encoding="utf-8"):
+            for _line in open(os.path.join(ROOT, "module", "module.prop"), encoding="utf-8"):
                 if _line.startswith("version="):
                     _ver = _line.split("=", 1)[1].strip()
                     break
