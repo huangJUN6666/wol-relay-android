@@ -29,6 +29,18 @@ STATE = os.path.join(os.path.expanduser("~"), ".wol-device-flow.json")
 TOKEN_FILE = ".git/gh-device-token"
 
 
+def _openers():
+    """先直连、不行再走系统代理，两条都试。
+
+    这台机器的情况来回变：有时代理对 github.com 返 502，只能直连；
+    有时直连超时（github.com 被解析到不可达地址），必须走代理。
+    写死哪一种都会在某天失效，所以按顺序试。
+    """
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    system = urllib.request.build_opener()  # 读 HTTP(S)_PROXY 环境变量
+    return (direct, system)
+
+
 def post(url, payload):
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
@@ -41,13 +53,21 @@ def post(url, payload):
         },
         method="POST",
     )
-    # 明确不走代理：这台机器的代理对 github.com 返回 502
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(req, timeout=30) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return json.loads(e.read().decode())
+    last = None
+    for opener in _openers():
+        try:
+            with opener.open(req, timeout=20) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            # HTTP 层有响应（哪怕是 4xx）就说明通了，别再换通道
+            try:
+                return json.loads(e.read().decode())
+            except ValueError:
+                raise
+        except (urllib.error.URLError, OSError) as e:
+            last = e
+            continue
+    raise last
 
 
 def remaining(d):
