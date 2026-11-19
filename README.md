@@ -165,7 +165,7 @@ adb push dist/wol-relay-v2.2.0.zip /sdcard/Download/
 
 # 改配置
 su -c 'vi /data/adb/wol-relay/config.json'
-# 把 mac 改成目标电脑的网卡地址
+# devices[0].mac 改成目标电脑的网卡地址，多台就往后加
 
 # 重启，然后自检
 adb reboot

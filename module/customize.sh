@@ -77,7 +77,7 @@ fi
 
 ui_print ""
 ui_print "下一步："
-ui_print "  1. 编辑 $DATA/config.json，把 mac 改成你要唤醒的网卡"
+ui_print "  1. 编辑 $DATA/config.json，把 devices[0].mac 改成你要唤醒的网卡"
 ui_print "  2. 重启手机"
 ui_print "  3. 日志在 /data/local/tmp/wolrelay.log"
 ui_print ""

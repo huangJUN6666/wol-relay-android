@@ -77,6 +77,20 @@ grep -q "^## v$MP_VER" CHANGELOG.md \
     && say "CHANGELOG" "有 v$MP_VER 章节" \
     || bad "CHANGELOG" "缺少 v$MP_VER 章节"
 
+# ---- 6. docs/ 里不能有旧版本的产物名 ----
+# 这一条是补漏：v2.2.0 发出去之后才发现 docs/03 整篇还写着 v2.1.2 的
+# 文件名和单 mac 的老配置格式，照着做的人刷进去的是上一版模块。
+# 代码改了、README 改了、docs 没跟上，是最容易漏的一类不一致 ——
+# 所以把它变成会报错的检查，而不是靠人记得。
+STALE=$(grep -rnoE "(wol-relay-|WOL-Relay-App-)v[0-9]+\.[0-9]+\.[0-9]+" docs/*.md 2>/dev/null \
+        | grep -v "v$MP_VER$" | sort -u)
+if [ -z "$STALE" ]; then
+    say "docs/ 里的产物版本" "全部是 v$MP_VER"
+else
+    bad "docs/ 里有旧版本产物名" ""
+    printf '%s\n' "$STALE" | while IFS= read -r l; do echo "    $l"; done
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
     echo "✅ 版本号全部一致：v$MP_VER"

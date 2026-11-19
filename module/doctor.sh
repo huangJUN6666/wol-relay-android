@@ -30,7 +30,15 @@ echo " $(date '+%F %T')"
 echo "==============================================="
 
 # MAC / IP 打码，方便直接贴出去
-mask_mac() { echo "$1" | sed 's/\(..:..:..\):..:..:../\1:XX:XX:XX/'; }
+# 打码要认得所有会被接受的写法，不然"打码"这层保护等于没做：
+#   1A:2B:3C:4D:5E:6F   冒号（最常用）
+#   1A-2B-3C-4D-5E-6F   横线（Windows ipconfig 里就是这个）
+#   1a2b.3c4d.5e6f      Cisco 点分四组
+# 截个图发群里求助时，整块网卡地址露出去就是这个函数没兜住。
+mask_mac() {
+    echo "$1" | sed -e 's/^\(..[:.-]..[:.-]..\)[:.-].*/\1:XX:XX:XX/' \
+                    -e 's/^\(....\)\.\(....\)\.\(....\)$/\1.\2.XXXX/'
+}
 mask_ip()  { echo "$1" | sed 's/\([0-9]*\.[0-9]*\)\.[0-9]*\.[0-9]*/\1.x.x/'; }
 
 # ---------- 第一层：root 与模块 ----------
@@ -82,6 +90,10 @@ if [ -f "$CONF" ]; then
     # 取第一个 mac 字段，两种格式都能匹配
     MAC=$(grep -o '"mac"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONF" 2>/dev/null \
           | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    # 全部 mac，用来查"第二台还是占位值"这种只填一半的情况。
+    # 只看第一个会漏 —— 多设备下最容易犯的就是加了一台、忘了改 MAC。
+    ALL_MACS=$(grep -o '"mac"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONF" 2>/dev/null \
+          | sed 's/.*"\([^"]*\)"$/\1/')
 fi
 
 if [ "$DEVS" -gt 1 ] 2>/dev/null; then
@@ -92,14 +104,60 @@ elif [ "$DEVS" -eq 0 ] && [ -z "$MAC" ]; then
     info "照着 $MODDIR/config.example.json 的 devices 格式填一台"
 fi
 
+# 判断一个值"是不是 MAC"，不能靠比对几个示例值。
+# install.sh 生成的占位值是整句中文「在这里填你的网卡 MAC，例如 1A:2B:3C:...」，
+# 它既非空、也不等于 AA:BB:CC:DD:EE:FF，按"非空且非示例"判就会直接 pass ——
+# 用户看到绿色的「MAC 已设置」，实际发出去的包地址是那句中文编码出的字节，
+# 永远唤不醒，且自检一路绿。所以这里只认真正的 MAC 形状：
+#   6 组两位十六进制，用 : - 分隔；或 Cisco 点分三组。
+is_mac() {
+    echo "$1" | grep -qiE '^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$|^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$'
+}
+
+# 占位值统计：示例里的两个值 + 一切「不像 MAC」的条目。
+ALL_N=0
+PLACEHOLDER=0
+BAD_MAC=""
+if [ -n "$ALL_MACS" ]; then
+    while IFS= read -r m; do
+        [ -z "$m" ] && continue
+        ALL_N=$((ALL_N + 1))
+        case "$m" in
+            AA:BB:CC:DD:EE:FF|11:22:33:44:55:66|AA-BB-CC-DD-EE-FF|11-22-33-44-55-66)
+                PLACEHOLDER=$((PLACEHOLDER + 1))
+                [ -z "$BAD_MAC" ] && BAD_MAC="$m（示例值）" ;;
+            *)
+                if ! is_mac "$m"; then
+                    PLACEHOLDER=$((PLACEHOLDER + 1))
+                    [ -z "$BAD_MAC" ] && BAD_MAC="$m"
+                fi ;;
+        esac
+    done <<EOF
+$ALL_MACS
+EOF
+fi
+
 if [ -z "$MAC" ]; then
     fail "MAC 还没填"
     info "把 config.json 里 devices[0].mac 改成目标电脑有线网卡的物理地址"
-elif [ "$MAC" = "AA:BB:CC:DD:EE:FF" ] || [ "$MAC" = "11:22:33:44:55:66" ]; then
-    fail "MAC 还没填（现在还是示例值）"
-    info "把 config.json 里的 mac 改成目标电脑有线网卡的物理地址"
+elif [ "$PLACEHOLDER" -gt 0 ] 2>/dev/null; then
+    if [ "$ALL_N" -gt "$PLACEHOLDER" ] 2>/dev/null; then
+        fail "$ALL_N 台里还有 $PLACEHOLDER 台地址无效（只填了一部分）"
+    else
+        fail "MAC 还没填好"
+    fi
+    # 把那个无效值原样贴出来 —— 「格式不对」这四个字帮不上忙，
+    # 用户看不出自己写的是中文说明、还是少打了一组。
+    info "无效的值：$BAD_MAC"
+    info "正确写法：1A:2B:3C:4D:5E:6F（有线网卡，不是 WiFi）"
 else
-    pass "MAC 已设置：$(mask_mac "$MAC")"
+    # 不要用 $( ... && echo ) 拼后缀：条件不成立时这个替换的退出码是 1，
+    # 现在没开 set -e 所以不炸，但以后谁加上去就变成"自检跑到这静默退出"。
+    if [ "$ALL_N" -gt 1 ] 2>/dev/null; then
+        pass "MAC 已设置：$(mask_mac "$MAC")（共 $ALL_N 台）"
+    else
+        pass "MAC 已设置：$(mask_mac "$MAC")"
+    fi
 fi
 
 TOKEN=$(grep -o '"token"[^,]*' "$CONF" 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/')
