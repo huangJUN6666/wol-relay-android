@@ -106,7 +106,7 @@ GitHub 上同类项目基本都是用 Termux 跑个 Python 脚本。能跑，但
 **软件：**
 
 - 中继：不需要额外依赖，一个静态二进制
-- 手机端 App：本仓库 Releases 里的 `WOL-Relay-App-v2.2.0.apk`
+- 手机端 App：本仓库 Releases 里的 `WOL-Relay-App-v2.2.1.apk`
 - 外网访问（可选）：Tailscale
 
 ## 整体步骤
@@ -157,10 +157,10 @@ flowchart TD
 ```bash
 # 依赖：go 1.21+、python3（打 zip 用）
 bash scripts/build-module.sh
-# 产物：dist/wol-relay-v2.2.0.zip
+# 产物：dist/wol-relay-v2.2.1.zip
 
 # 推到手机并刷入
-adb push dist/wol-relay-v2.2.0.zip /sdcard/Download/
+adb push dist/wol-relay-v2.2.1.zip /sdcard/Download/
 # 手机上打开 Magisk → 模块 → 从本地安装 → 选这个 zip
 
 # 改配置
@@ -177,7 +177,7 @@ App 那边：
 ```bash
 cp build.env.example build.env   # 填本机 SDK / JDK 路径
 bash scripts/build-apk.sh
-# 产物：dist/WOL-Relay-App-v2.2.0.apk
+# 产物：dist/WOL-Relay-App-v2.2.1.apk
 ```
 
 ### 想自己发一份到 GitHub

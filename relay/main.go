@@ -30,7 +30,7 @@ import (
 // 版本号要跟 module.prop 的 version 对上。
 // App 会拿 /status 返回的 version 判断中继是不是太老，
 // 两边不一致就会出现"明明刷的是新版，App 说过期了"。
-const version = "2.2.0"
+const version = "2.2.1"
 
 func main() {
 	var (

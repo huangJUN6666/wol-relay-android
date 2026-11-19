@@ -1,6 +1,6 @@
 id=wol-relay
 name=WOL Relay 中继守护
-version=v2.2.0
-versionCode=20200
+version=v2.2.1
+versionCode=20201
 author=神仙道 (QQ 1974147300)
 description=把一台常开设备变成家里的开机跳板：开机自启、HTTP 监听、按需向局域网广播魔术包，进程退出自动退避重启。可以用 Magisk 模块装在闲置安卓机上，也可以用免 root 的裸二进制装在路由器/NAS/树莓派上。发完包会真的去确认「醒没醒」，告诉你「已开机 · 23 秒」而不是「大概 10~20 秒」。支持一台中继开多台机器。自动跳过 Tailscale 等隧道网卡算广播地址，开了代理/VPN 也不会发错网段。

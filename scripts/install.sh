@@ -18,7 +18,7 @@
 #    sudo sh install.sh
 #
 #    # 指定版本和安装目录
-#    sudo VERSION=v2.2.0 PREFIX=/opt/wolrelay sh install.sh
+#    sudo VERSION=v2.2.1 PREFIX=/opt/wolrelay sh install.sh
 #
 #    # 只打印将要做什么，不实际改动系统
 #    sh install.sh --dry-run

@@ -149,7 +149,7 @@ docker run -d --name wolrelay --restart=always \
 
 如果你手上正好有能 root 的安卓机，这条路依然可用，而且比 Termux 稳得多。
 
-下载 Release 里的 `wol-relay-v2.2.0.zip`，在 Magisk / KernelSU / APatch 里刷入。
+下载 Release 里的 `wol-relay-v2.2.1.zip`，在 Magisk / KernelSU / APatch 里刷入。
 
 配置在 `/data/adb/wol-relay/config.json`（不是模块目录里 —— 升级模块会把模块目录整个换掉）：
 
