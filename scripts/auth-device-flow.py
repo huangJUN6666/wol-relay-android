@@ -6,8 +6,9 @@
 设备流只要在浏览器里输一串码点一下同意，不会漏。
 
 用法：
-    python scripts/auth-device-flow.py            # 生成码，等你授权
+    python scripts/auth-device-flow.py            # 生成码，等你授权（已有未过期的码就复用）
     python scripts/auth-device-flow.py --poll     # 只轮询上一次生成的码
+    python scripts/auth-device-flow.py --new      # 强制换一个新码（旧的立即作废）
 
 安全：
     - token 只写到 .git/gh-device-token（已被 .gitignore 忽略），不落别处
@@ -49,12 +50,42 @@ def post(url, payload):
         return json.loads(e.read().decode())
 
 
-def start():
+def remaining(d):
+    """这个码还剩几秒可用，0 表示已过期。"""
+    born = d.get("created_at")
+    if not born:
+        # 老版本写下的状态文件没记时间，按已过期处理，免得用户白等
+        return 0
+    return int(born + d.get("expires_in", 900) - time.time())
+
+
+def start(force_new=False):
+    # 关键：不带 --poll 再跑一次，不能默默换掉已经发出去的码。
+    # 之前就是这样——第一次给了码 A，用户去浏览器输，这边又跑了一次生成码 B，
+    # 用户输 A 永远 pending，看着像"授权没生效"，其实是自己把 A 作废了。
+    if not force_new and os.path.exists(STATE):
+        try:
+            with open(STATE, encoding="utf-8") as f:
+                old = json.load(f)
+        except (ValueError, OSError):
+            old = {}
+        if old.get("user_code") and remaining(old) > 60:
+            print()
+            print("  已经有一个没过期的码，继续用它（不重新生成）：")
+            print("  在浏览器打开：  " + old.get("verification_uri", "https://github.com/login/device"))
+            print("  输入这个码：    " + old["user_code"])
+            print("  还剩：          %d 分钟" % (remaining(old) // 60))
+            print()
+            print("  想换一个新码，加 --new")
+            print()
+            return old
+
     d = post("https://github.com/login/device/code",
              {"client_id": CLIENT_ID, "scope": SCOPE})
     if "device_code" not in d:
         print("生成授权码失败：", d)
         sys.exit(1)
+    d["created_at"] = int(time.time())
     with open(STATE, "w", encoding="utf-8") as f:
         json.dump(d, f)
     print()
@@ -74,8 +105,13 @@ def poll():
     with open(STATE, encoding="utf-8") as f:
         d = json.load(f)
     interval = d.get("interval", 5)
-    deadline = time.time() + d.get("expires_in", 900)
-    print("等待授权…（码 %s）" % d["user_code"])
+    # 按"这个码还剩多久"算截止，不是按"从现在起再等 15 分钟"
+    left = remaining(d)
+    if left <= 0:
+        print("这个码已经过期了，运行 python scripts/auth-device-flow.py --new 换一个")
+        sys.exit(1)
+    deadline = time.time() + left
+    print("等待授权…（码 %s，还剩 %d 分钟）" % (d["user_code"], left // 60))
     while time.time() < deadline:
         r = post("https://github.com/login/oauth/access_token", {
             "client_id": CLIENT_ID,
@@ -106,7 +142,7 @@ def poll():
 
 def main():
     if "--poll" not in sys.argv:
-        start()
+        start(force_new="--new" in sys.argv)
         print("授权完成后运行：python scripts/auth-device-flow.py --poll")
         return
     if not os.path.isdir(".git"):
